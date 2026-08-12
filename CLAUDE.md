@@ -8,12 +8,17 @@ viewports --- 1920×1080 (desktop) and 390×844 (phone) --- and both count in
 full, so make that artefact good at both and use the checks below to know
 whether it is.
 
-What you're building this week — the spec — is published on the course website,
-and this repo's name tells you which deliverable it is. Run the course plugin's
+The course website publishes this deliverable's brief and spec. The brief poses
+the problem; the spec is the fixed contract every response must satisfy. This
+repo's name tells you which deliverable applies. Run the course plugin's
 **start** skill at the start of each week: it pulls the right spec from the
 course API, carries your harness forward from last week, and helps you turn the
-spec's checkable lines into tests of your own. Read the spec before you build,
-and see `spec/README.md` for how the checks in this repo relate to it.
+spec's checkable lines into tests of your own. Read the brief and spec before
+you plan or build, and see `spec/README.md` for how the checks relate to them.
+
+### Writing paragraphs in websites
+
+When writing paragraphs or text, try to keep it short and boilerplate so I can expand on it instead.
 
 ## How to work in here
 
@@ -21,7 +26,8 @@ and see `spec/README.md` for how the checks in this repo relate to it.
 - Before you push, run `pnpm check`. It runs most of what CI runs --- build,
   lint, and the spec --- so you catch those in seconds instead of waiting for
   the pipeline. The links check, the evidence check, the secrets scan, and the
-  deploy itself only run in CI; run `pnpm dlx linkinator ./dist --silent`
+  deploy itself only run in CI; run
+  `pnpm dlx linkinator ./dist --silent --skip "^https?://(?!localhost|127)"`
   locally against a fresh `pnpm build` for the links check without waiting for
   CI.
 - To see what the page actually looks like rather than what you assume it looks
@@ -63,8 +69,8 @@ running counts as not green, so ship with time for CI to finish.
   if it loads locally.
 - **spec** --- `spec/invariants.test.ts` asserts what's true of any good
   website, whatever the week's brief asks; the tests you write for the week's
-  own spec run alongside it (any `spec/*.test.ts`). A failure names the contract
-  you haven't met yet.
+  spec run alongside it (any `spec/*.test.ts`). A failure names the contract you
+  haven't met yet.
 - **lint** --- `stylelint` for CSS, `oxlint` for TypeScript. Flags code that's
   wrong, fragile, or non-idiomatic. Read the rule it names.
 - **tests** --- any other tests you write, wherever you put them (co-located
@@ -82,7 +88,9 @@ running counts as not green, so ship with time for CI to finish.
   [assessment page](https://comp.anu.edu.au/courses/comp4020-agentic-coding-studio/topics/assessment/#what-you-submit)
   for what counts as evidence.
 - **links** --- internal links must resolve. A broken link is a dead end you
-  didn't mean to ship.
+  didn't mean to ship. Links off your site aren't checked, so that a third
+  party's rate limiter can't decide whether your site ships --- a dead outbound
+  link is yours to catch.
 - **secrets** --- the repo is scanned for committed credentials. Never put a
   key, token, or password in a tracked file. If one leaks, rotate it. A local
   pre-commit hook (`.githooks/pre-commit`, installed by `pnpm install`) also
@@ -97,22 +105,23 @@ CI machine, not proof the site is fast for real users.
 
 ## The stack is swappable
 
-Out of the box this is plain HTML/CSS/TypeScript on Vite, and every `.html` file
-in the repo is a page: add pages, link them, and the build picks them up with no
-config. That's a default, not a rule (unless the week's spec says otherwise).
-You can swap in Astro or any other static generator, because nothing in CI names
-a tool --- the whole contract is:
+This repo runs on Astro (`src/pages/*.astro` are pages, `astro build` emits
+`dist/`) --- carried forward from last week, not this week's template default,
+because nothing in CI names a tool. The whole contract is:
 
 - `pnpm build` emits the complete site into `dist/`
 - the `package.json` scripts (`check`, `check:evidence`, `build`) keep working
 - whatever lands in `dist/` still passes the invariants in `spec/`
 
 Two things bite in a swap. The deployed site lives under a path
-(`…github.io/<repo>/`), so configure your generator's base path --- this
-template's Vite config uses relative asset URLs to sidestep that, but most
-generators (Astro included) need `base` set explicitly, and getting it wrong
-looks fine locally while every asset 404s on the live URL. And commit the
-updated `pnpm-lock.yaml`: CI installs with `--frozen-lockfile`.
+(`…github.io/<repo>/`), so configure your generator's base path --- Astro needs
+`base` set explicitly in `astro.config.mjs`, and getting it wrong looks fine
+locally while every asset 404s on the live URL. And commit the updated
+`pnpm-lock.yaml`: CI installs with `--frozen-lockfile`.
+
+Don't wire a future swap by hand: the course plugin's `stack` skill runs a
+tested conversion script that handles both of the traps above plus the CI
+link-check patch, and leaves the whole change staged as one reviewable diff.
 
 ## Your process is part of the mark
 
@@ -145,7 +154,7 @@ means building legibly is part of building well.
   work changed about the developer you want to be. It stays out of the deployed
   site. It's due at the cutoff, and if it isn't in the repo by then the week
   doesn't count as shipped, however good the prototype is.
-- **This file is process evidence.** The harness you build to direct the agent,
+- **This file is process evidence.** The harness you build to direct the work,
   this `CLAUDE.md` and any `AGENTS.md`, is itself read as part of how you
   worked. Keep it honest and current (see below).
 
@@ -155,8 +164,8 @@ know whose repo it is. Spend the effort on the work.
 ## This file is yours
 
 This CLAUDE.md is a starting point, not a fixed rulebook. As you learn what your
-prototype needs --- a convention to hold the agent to, a sensor that keeps
-catching you out, a fact about the stack the agent keeps getting wrong --- write
-it down here. Growing this file is the work of harness engineering, and the gap
+prototype needs --- a convention the work has to hold to, a sensor that keeps
+catching you out, a fact about the stack that's easy to get wrong --- write it
+down here. Growing this file is the work of harness engineering, and the gap
 between this boilerplate and your own version is part of what your prototype
 says about the developer you're becoming.
