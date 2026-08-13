@@ -7,8 +7,11 @@
  * change), and writes a screenshot per viewport so the rendered result can be
  * checked by eye rather than by hope.
  *
- *   pnpm shoot            # screenshots into .screens/
- *   pnpm shoot --keep     # leave the browser open
+ *   pnpm shoot                     # against a local server over dist/
+ *   pnpm shoot https://…/repo/     # against the deployed URL, sub-path and all
+ *
+ * The deployed form matters: an asset path that resolves locally can still 404
+ * under a project sub-path, and only the live URL proves otherwise.
  */
 
 import { createServer } from "node:http";
@@ -133,7 +136,11 @@ async function main(): Promise<void> {
   }
   await mkdir(OUT, { recursive: true });
 
-  const site = await serve();
+  // A URL argument checks the deployed site instead of a local copy of dist/.
+  const target = process.argv[2];
+  const site = target
+    ? { url: target, close: () => {} }
+    : await serve();
   const browser = await puppeteer.launch({
     executablePath: findChrome(),
     args: ["--no-sandbox", "--font-render-hinting=none"],
@@ -141,6 +148,8 @@ async function main(): Promise<void> {
 
   const problems: string[] = [];
   const report: string[] = [];
+
+  report.push(`target: ${site.url}`);
 
   const weight = await bundleWeight();
   report.push(
