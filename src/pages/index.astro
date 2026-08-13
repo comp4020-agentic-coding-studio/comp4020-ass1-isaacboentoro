@@ -1,5 +1,16 @@
 ---
 import "../styles/global.css";
+import { STAGES, STAGE_TITLES } from "../compiler/types";
+
+const BLURBS: Record<(typeof STAGES)[number], string> = {
+  preprocess:
+    "Text in, different text out. The compiler proper never sees what you wrote.",
+  scan: "Characters become tokens. Spelling stops mattering; categories start.",
+  parse: "The flat list becomes a tree. Precedence is a shape, not an order.",
+  semantics: "Names get homes and types get checked. None of this is in your source.",
+  ir: "The tree becomes a list. Control flow becomes jumps.",
+  codegen: "Instructions a processor could run — and a lot of moving data around.",
+};
 ---
 
 <!doctype html>
@@ -7,15 +18,158 @@ import "../styles/global.css";
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Assignment 1</title>
+    <title>Six rewrites: what compiling C actually does</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <meta
+      name="description"
+      content="An interactive explainer. Type C, then step through every rewrite a compiler makes on the way to assembly."
+    />
   </head>
   <body>
-    <nav>
-      <a href="/">Home</a>
+    <nav aria-label="Sections">
+      <a href="#code">The code</a>
+      <a href="#pipeline">The rewrites</a>
+      <a href="#limits">What is left out</a>
     </nav>
+
     <main>
-      <h1>Assignment 1</h1>
-      <p>Starting point.</p>
+      <h1>Your C is rewritten six times before anything runs</h1>
+
+      <p class="lede">
+        Compiling is not one translation. It is a sequence of small rewrites, and
+        each one throws away something the last one needed. Type some C below,
+        then drag the scrubber to watch every rewrite happen, one step at a time.
+      </p>
+
+      <section id="code" aria-labelledby="code-heading">
+        <h2 id="code-heading">The code</h2>
+        <p>
+          A small subset of C: <code>int</code> and <code>char</code>, locals,
+          arithmetic, <code>if</code>, <code>while</code>, <code>for</code>, and
+          functions that can call each other. Edit it and everything below
+          recompiles.
+        </p>
+
+        <div class="editor">
+          <label class="editor-label" for="source">C source</label>
+          <div class="editor-frame">
+            <pre class="editor-mirror" id="mirror" aria-hidden="true"></pre>
+            <textarea
+              id="source"
+              class="editor-input"
+              spellcheck="false"
+              autocapitalize="off"
+              autocorrect="off"
+              rows="12"
+              aria-describedby="editor-help"></textarea>
+          </div>
+          <p class="editor-help" id="editor-help">
+            The highlight marks the text the current step is looking at.
+          </p>
+        </div>
+
+        <div
+          class="presets"
+          id="presets"
+          role="group"
+          aria-label="Example programs"
+        >
+        </div>
+      </section>
+
+      <section id="pipeline" aria-labelledby="pipeline-heading">
+        <h2 id="pipeline-heading">The rewrites</h2>
+
+        <div class="controls">
+          <div class="controls-row">
+            <button id="play" type="button" aria-pressed="false">Play</button>
+            <input
+              id="scrubber"
+              class="scrubber"
+              type="range"
+              min="0"
+              max="0"
+              value="0"
+              step="1"
+              aria-label="Compilation step"
+            />
+            <p class="position" id="position">step 1 of 1</p>
+          </div>
+
+          <div
+            id="stage-ticks"
+            class="ticks"
+            role="group"
+            aria-label="Jump to a stage"
+          >
+          </div>
+
+          <div class="commentary" aria-live="polite">
+            <p class="commentary-title" id="step-title"></p>
+            <p class="commentary-explain" id="step-explain"></p>
+          </div>
+        </div>
+
+        <div class="panes" id="pipeline-panes">
+          {
+            STAGES.map((stage, index) => (
+              <section class="pane" aria-labelledby={`pane-heading-${stage}`}>
+                <header class="pane-head">
+                  <h3 class="pane-title" id={`pane-heading-${stage}`}>
+                    <span class="pane-number">{index + 1}</span>
+                    {STAGE_TITLES[stage]}
+                  </h3>
+                  <p class="pane-blurb">{BLURBS[stage]}</p>
+                </header>
+                <div class="pane-scroll" id={`pane-${stage}`} />
+              </section>
+            ))
+          }
+        </div>
+      </section>
+
+      <section id="limits" aria-labelledby="limits-heading">
+        <h2 id="limits-heading">What is left out</h2>
+        <p>
+          This is a real compiler, but a small one, and being clear about the
+          edges matters more than pretending otherwise.
+        </p>
+        <ul>
+          <li>
+            No pointers, arrays, structs or floats. Declarations are simple:
+            <code>int x;</code> or <code>int x = 1;</code>
+          </li>
+          <li>
+            No standard library and no <code>#include</code>. Every function has
+            to be defined here.
+          </li>
+          <li>
+            No register allocation. Every temporary gets a stack slot, which is
+            why the assembly is mostly loads and stores — and why optimising
+            compilers exist.
+          </li>
+          <li>
+            No assembler and no linker. The last pane is assembly text; turning
+            it into an executable is two more stages that do not run here.
+          </li>
+        </ul>
+      </section>
     </main>
+
+    <noscript>
+      <p>
+        This page is the interaction: it compiles what you type, in your browser,
+        and steps through the result. With JavaScript off there is nothing to
+        step through. The six stages it walks are preprocessing, scanning,
+        parsing, semantic analysis, lowering to an intermediate representation,
+        and generating assembly.
+      </p>
+    </noscript>
+
+    <script>
+      import { start } from "../ui/app";
+
+      start();
+    </script>
   </body>
 </html>

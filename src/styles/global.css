@@ -1,6 +1,698 @@
+/*
+ * One page, one control. The layout is deliberately all CSS and no JavaScript:
+ * the cursor lives in the app module, so resizing — or rotating a phone — in the
+ * middle of a drag cannot reset what you were looking at.
+ */
+
+:root {
+  --bg: #12141a;
+  --bg-raised: #1a1d26;
+  --bg-sunken: #0d0f14;
+  --line: #2b3040;
+  --text: #e7e9f0;
+  --text-dim: #a2a8bd;
+  --accent: #7fd4ff;
+  --accent-dim: #2d5f78;
+  --hot: #ffd479;
+  --bad: #ff8f8f;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", monospace;
+  --step: 0.35rem;
+  --radius: 0.5rem;
+}
+
+* {
+  box-sizing: border-box;
+}
+
 body {
+  background: var(--bg);
+  color: var(--text);
   font-family: system-ui, sans-serif;
+  line-height: 1.55;
+  margin: 0;
+  padding: 0 1rem 3rem;
+}
+
+nav {
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
   margin: 0 auto;
-  max-width: 60rem;
-  padding: 2rem;
+  max-width: 92rem;
+  padding: 0.75rem 0;
+}
+
+a {
+  color: var(--accent);
+}
+
+main {
+  margin: 0 auto;
+  max-width: 92rem;
+}
+
+h1 {
+  font-size: clamp(1.6rem, 4vw, 2.6rem);
+  line-height: 1.15;
+  margin: 1.5rem 0 0.5rem;
+  max-width: 40ch;
+}
+
+h2 {
+  font-size: 1.15rem;
+  margin: 0 0 0.5rem;
+}
+
+.lede {
+  color: var(--text-dim);
+  font-size: 1.05rem;
+  margin: 0 0 2rem;
+  max-width: 62ch;
+}
+
+section {
+  margin: 0 0 2rem;
+}
+
+section > p {
+  color: var(--text-dim);
+  margin: 0 0 1rem;
+  max-width: 62ch;
+}
+
+code {
+  background: var(--bg-sunken);
+  border-radius: 0.25rem;
+  font-family: var(--mono);
+  font-size: 0.9em;
+  padding: 0.05em 0.3em;
+}
+
+/* ---------------------------------------------------------------- the editor */
+
+.editor-label {
+  color: var(--text-dim);
+  display: block;
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  margin-bottom: 0.35rem;
+  text-transform: uppercase;
+}
+
+.editor-frame {
+  position: relative;
+}
+
+/* The mirror and the input must agree on every metric or the highlight drifts. */
+.editor-mirror,
+.editor-input {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  margin: 0;
+  overflow-wrap: break-word;
+  padding: 0.85rem;
+  tab-size: 2;
+  white-space: pre-wrap;
+}
+
+.editor-mirror {
+  background: var(--bg-sunken);
+  color: var(--text);
+  min-height: 15rem;
+  overflow: hidden;
+}
+
+.editor-mirror mark {
+  background: var(--accent-dim);
+  border-radius: 0.15rem;
+  color: #fff;
+}
+
+/* Transparent text, visible caret: the mirror underneath is what you read. */
+.editor-input {
+  background: transparent;
+  caret-color: var(--accent);
+  color: transparent;
+  height: 100%;
+  inset: 0;
+  position: absolute;
+  resize: none;
+  width: 100%;
+}
+
+.editor-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.editor-input::selection {
+  background: rgb(127 212 255 / 30%);
+}
+
+.editor-help {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  margin: 0.5rem 0 0;
+}
+
+.presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.preset {
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  cursor: pointer;
+  display: block;
+  font: inherit;
+  padding: 0.4rem 0.7rem;
+  text-align: left;
+}
+
+.preset:hover {
+  border-color: var(--accent-dim);
+}
+
+.preset-name {
+  display: block;
+  font-size: 0.9rem;
+}
+
+.preset-about {
+  color: var(--text-dim);
+  display: block;
+  font-size: 0.75rem;
+}
+
+/* --------------------------------------------------------------- the control */
+
+.controls {
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.85rem;
+}
+
+.controls-row {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+}
+
+#play {
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--radius);
+  color: #07202b;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  min-width: 5rem;
+  padding: 0.5rem 0.9rem;
+}
+
+#play[aria-pressed="true"] {
+  background: var(--hot);
+}
+
+.scrubber {
+  accent-color: var(--accent);
+  flex: 1;
+  min-width: 0;
+}
+
+.scrubber:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.position {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.ticks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.75rem;
+}
+
+.tick {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.6rem;
+}
+
+.tick[aria-current="step"] {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.tick:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.commentary {
+  border-top: 1px solid var(--line);
+  margin-top: 0.75rem;
+  min-height: 4.5rem;
+  padding-top: 0.75rem;
+}
+
+.commentary-title {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  margin: 0 0 0.25rem;
+}
+
+.commentary-explain {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  margin: 0;
+  max-width: 60ch;
+}
+
+/* ----------------------------------------------------------------- the panes */
+
+.panes {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.pane {
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin: 0;
+  overflow: hidden;
+}
+
+.pane.is-active {
+  border-color: var(--accent-dim);
+}
+
+.pane-head {
+  border-bottom: 1px solid var(--line);
+  padding: 0.7rem 0.85rem;
+}
+
+.pane-title {
+  align-items: center;
+  display: flex;
+  font-size: 0.95rem;
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.pane-number {
+  background: var(--bg-sunken);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  height: 1.5rem;
+  line-height: 1.5rem;
+  text-align: center;
+  width: 1.5rem;
+}
+
+.pane.is-active .pane-number {
+  background: var(--accent);
+  color: #07202b;
+}
+
+.pane-blurb {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  margin: 0.25rem 0 0;
+}
+
+.pane-scroll {
+  max-height: 22rem;
+  overflow: auto;
+  padding: 0.85rem;
+  position: relative;
+}
+
+.pane-note {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  margin: 0.75rem 0 0;
+}
+
+.pane-subhead {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  margin: 1rem 0 0.35rem;
+  text-transform: uppercase;
+}
+
+/* Everything the scrubber reveals starts hidden but keeps its space. */
+[data-reveal] {
+  opacity: 0.12;
+  transition: opacity 120ms ease-out;
+}
+
+[data-reveal].is-shown {
+  opacity: 1;
+}
+
+[data-reveal].is-current {
+  outline: 2px solid var(--hot);
+  outline-offset: 2px;
+}
+
+.diagnostic {
+  background: rgb(255 143 143 / 10%);
+  border: 1px solid var(--bad);
+  border-radius: var(--radius);
+  margin-bottom: 0.85rem;
+  padding: 0.6rem 0.75rem;
+}
+
+.diagnostic-message {
+  color: var(--bad);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.diagnostic-where,
+.diagnostic-hint {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  margin: 0.25rem 0 0;
+}
+
+/* preprocess */
+
+.edits {
+  display: grid;
+  gap: 0.35rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.edit {
+  align-items: baseline;
+  background: var(--bg-sunken);
+  border-radius: 0.3rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+}
+
+.edit-kind {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.edit-note {
+  font-size: 0.85rem;
+}
+
+.listing {
+  background: var(--bg-sunken);
+  border-radius: 0.3rem;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  margin: 0;
+  overflow-x: auto;
+  padding: 0.6rem 0.75rem;
+}
+
+.listing-text code {
+  background: none;
+  padding: 0;
+  white-space: pre-wrap;
+}
+
+/* scan */
+
+.tokens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.token {
+  background: var(--bg-sunken);
+  border: 1px solid var(--line);
+  border-radius: 0.3rem;
+  display: grid;
+  padding: 0.2rem 0.45rem;
+}
+
+.token-text {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+
+.token-kind {
+  color: var(--text-dim);
+  font-size: 0.6rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.token-keyword .token-text {
+  color: var(--accent);
+}
+
+.token-number .token-text,
+.token-char .token-text {
+  color: var(--hot);
+}
+
+/* parse */
+
+.tree,
+.tree-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tree-children {
+  border-left: 1px solid var(--line);
+  margin-left: 0.6rem;
+  padding-left: 0.7rem;
+}
+
+.tree-node {
+  margin: 0.15rem 0;
+}
+
+.tree-label {
+  align-items: baseline;
+  background: var(--bg-sunken);
+  border-radius: 0.3rem;
+  display: inline-flex;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  gap: 0.4rem;
+  padding: 0.1rem 0.4rem;
+}
+
+.tree-kind {
+  color: var(--text-dim);
+  font-family: system-ui, sans-serif;
+  font-size: 0.65rem;
+}
+
+/* semantics */
+
+.symbols {
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  width: 100%;
+}
+
+.symbols th {
+  border-bottom: 1px solid var(--line);
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  padding: 0.3rem 0.4rem;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.symbols td {
+  border-bottom: 1px solid var(--line);
+  padding: 0.3rem 0.4rem;
+}
+
+.symbol-name,
+.symbol-slot {
+  font-family: var(--mono);
+}
+
+/* ir and codegen */
+
+.listing-ir,
+.listing-asm {
+  display: grid;
+  list-style: none;
+}
+
+.ir-line,
+.asm-line {
+  padding: 0.05rem 0;
+  white-space: pre;
+}
+
+.ir-label,
+.asm-label {
+  color: var(--hot);
+}
+
+.asm-directive {
+  color: var(--text-dim);
+}
+
+.asm-comment {
+  color: var(--text-dim);
+  padding-left: 1.5rem;
+}
+
+noscript p {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  margin: 0 auto;
+  max-width: 62ch;
+  padding: 1rem;
+}
+
+/* ---------------------------------------------------------------- viewports */
+
+/* Phone: one pane at a time. The scrubber already chooses the stage, so nothing
+   extra is needed to switch between them. */
+@media (width <= 60rem) {
+  .pane {
+    display: none;
+  }
+
+  .pane.is-active {
+    display: block;
+  }
+
+  .pane-scroll {
+    max-height: 55vh;
+  }
+
+  .editor-mirror {
+    min-height: 11rem;
+  }
+
+  /* Seven stacked cards pushed the scrubber a screen and a half down the page.
+     On a phone the examples become one swipeable row of names. */
+  .presets {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 0.35rem;
+  }
+
+  .preset {
+    white-space: nowrap;
+  }
+
+  .preset-about {
+    display: none;
+  }
+}
+
+/* Narrow phones: the slider gets its own line, and enough height to drag. */
+@media (width <= 30rem) {
+  .controls-row {
+    display: grid;
+    gap: 0.5rem 0.75rem;
+    grid-template-columns: auto 1fr;
+  }
+
+  #play {
+    grid-area: 1 / 1;
+  }
+
+  .position {
+    grid-area: 1 / 2;
+    text-align: right;
+  }
+
+  .scrubber {
+    grid-area: 2 / 1 / 3 / -1;
+    height: 2.25rem;
+  }
+}
+
+@media (width >= 60rem) {
+  main {
+    align-items: start;
+    display: grid;
+    gap: 0 2.5rem;
+    grid-template-columns: minmax(22rem, 34fr) 66fr;
+  }
+
+  h1,
+  .lede,
+  #limits {
+    grid-column: 1 / -1;
+  }
+
+  /* `align-self: start` is what makes sticky work inside a grid: the row is as
+     tall as the pipeline beside it, so the editor has somewhere to travel. */
+  #code {
+    align-self: start;
+    grid-area: 3 / 1;
+    position: sticky;
+    top: 1.5rem;
+  }
+
+  #pipeline {
+    grid-area: 3 / 2;
+  }
+
+  .controls {
+    position: sticky;
+    top: 1.5rem;
+    z-index: 1;
+  }
+
+  .panes {
+    align-items: start;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-reveal] {
+    transition: none;
+  }
 }
