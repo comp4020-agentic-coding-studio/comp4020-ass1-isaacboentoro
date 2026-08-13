@@ -20,6 +20,41 @@
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", monospace;
   --rule: 2px;
   --rule-heavy: 5px;
+  --fast: 120ms;
+  --slow: 170ms;
+  --ease: cubic-bezier(0.2, 0, 0.3, 1);
+}
+
+/*
+ * Motion. Short, linear-ish, and only on opacity and transform — brutalism can
+ * move, but it should not bounce, and nothing here animates a property that costs
+ * a layout. Every duration is disabled wholesale under `prefers-reduced-motion`
+ * at the bottom of this file.
+ */
+@keyframes appear {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The highlight sweeps in rather than blinking, which makes it easier to follow
+   from one step to the next. */
+@keyframes mark-in {
+  from {
+    background: transparent;
+    color: inherit;
+  }
+
+  to {
+    background: var(--accent);
+    color: var(--bg);
+  }
 }
 
 * {
@@ -72,6 +107,9 @@ a {
   color: var(--fg);
   text-decoration-thickness: var(--rule);
   text-underline-offset: 0.25em;
+  transition:
+    background-color var(--fast) var(--ease),
+    color var(--fast) var(--ease);
 }
 
 a:hover {
@@ -194,6 +232,7 @@ section {
 }
 
 mark {
+  animation: mark-in var(--slow) var(--ease);
   background: var(--accent);
   color: var(--bg);
 }
@@ -217,6 +256,14 @@ mark {
   font: inherit;
   padding: 0.5rem 0.75rem;
   text-align: left;
+  transition:
+    background-color var(--fast) var(--ease),
+    color var(--fast) var(--ease),
+    transform 70ms var(--ease);
+}
+
+.preset:active {
+  transform: translateY(1px);
 }
 
 .preset:hover {
@@ -264,6 +311,11 @@ mark {
   letter-spacing: 0.16em;
   min-width: 7rem;
   padding: 0.5rem 1rem;
+  transition:
+    background-color var(--fast) var(--ease),
+    border-color var(--fast) var(--ease),
+    color var(--fast) var(--ease),
+    transform 70ms var(--ease);
 }
 
 .player-play:hover {
@@ -346,6 +398,8 @@ mark {
   max-height: 26rem;
   overflow: auto;
   padding: 0.9rem;
+  scroll-behavior: smooth;
+  transition: border-color var(--fast) var(--ease);
 }
 
 .stage-body:focus-visible,
@@ -359,6 +413,10 @@ mark {
 
 .stage.is-empty .stage-body {
   border-color: var(--dimmer);
+}
+
+.player-play:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .pane-note {
@@ -384,7 +442,15 @@ mark {
  */
 [data-reveal] {
   opacity: 0;
-  transition: opacity 90ms linear;
+
+  /* The outline is always here and always the same width, just transparent — so
+     the current-step marker fades between artefacts instead of snapping, and
+     nothing reflows when it moves. */
+  outline: var(--rule) solid transparent;
+  outline-offset: 2px;
+  transition:
+    opacity var(--fast) var(--ease),
+    outline-color var(--slow) var(--ease);
   visibility: hidden;
 }
 
@@ -394,8 +460,7 @@ mark {
 }
 
 [data-reveal].is-current {
-  outline: var(--rule) solid var(--accent);
-  outline-offset: 2px;
+  outline-color: var(--accent);
 }
 
 /*
@@ -406,7 +471,10 @@ mark {
   display: none;
 }
 
+/* `display` cannot be transitioned, so growth is an animation instead: it runs
+   at the moment the class lands, which is the moment the node comes into being. */
 [data-grow].is-shown {
+  animation: appear var(--slow) var(--ease);
   display: block;
 }
 
@@ -527,6 +595,7 @@ mark {
 }
 
 .tree [data-reveal].is-shown {
+  animation: appear var(--slow) var(--ease);
   display: inline-flex;
 }
 
@@ -667,8 +736,18 @@ noscript p {
   }
 }
 
+/*
+ * One switch for every duration in the file. Anything added above is covered by
+ * it automatically, which is the point — a new transition should not be able to
+ * quietly escape this.
+ */
 @media (prefers-reduced-motion: reduce) {
-  [data-reveal] {
-    transition: none;
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
   }
 }

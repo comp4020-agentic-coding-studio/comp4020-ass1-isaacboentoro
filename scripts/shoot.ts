@@ -342,6 +342,32 @@ async function main(): Promise<void> {
     await scrubTo(page, "parse", 8);
     await scrubTo(page, "codegen", 3);
 
+    // Reduced motion is the easiest promise to break by accident: a transition
+    // added later escapes it unless the switch is wholesale. Ask the browser.
+    await page.emulateMediaFeatures([
+      { name: "prefers-reduced-motion", value: "reduce" },
+    ]);
+    const stillMoving = await page.evaluate(() => {
+      const samples = [
+        ...document.querySelectorAll("[data-reveal], [data-grow], .preset, .player-play, a"),
+      ].slice(0, 60);
+      return samples
+        .map((node) => {
+          const style = getComputedStyle(node);
+          const longest = [style.transitionDuration, style.animationDuration]
+            .flatMap((value) => value.split(","))
+            .map((value) => Number.parseFloat(value) || 0);
+          return Math.max(0, ...longest);
+        })
+        .filter((seconds) => seconds > 0.05).length;
+    });
+    if (stillMoving > 0) {
+      note(`${stillMoving} element(s) still animate under prefers-reduced-motion`);
+    }
+    await page.emulateMediaFeatures([
+      { name: "prefers-reduced-motion", value: "no-preference" },
+    ]);
+
     const violations = await axeScan(page);
     for (const violation of violations) {
       note(
@@ -356,6 +382,7 @@ async function main(): Promise<void> {
       `${viewport.name} ${viewport.width}x${viewport.height}: ${sections.length} sections, ` +
         `revealed ${STAGES.map((s) => `${s}=${counts[s].start}->${counts[s].end}`).join(" ")}, ` +
         `tree grew ${grewFrom}->${grewMid}->${grewTo}px, ` +
+        `reduced motion honoured, ` +
         `independent, keyboard ok, cursors survive resize, ` +
         `${overflow <= 1 ? "no" : `${overflow}px`} overflow, ` +
         `${violations.length === 0 ? "no serious axe violations" : `${violations.length} axe violation(s)`}, ` +

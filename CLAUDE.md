@@ -52,6 +52,15 @@ these, and each one is here because breaking it cost me something.
   line yellow is noise. Where a step really is about the whole file, the
   commentary carries it — and prefer a narrow span in the first place: the
   analyser points at a function's name, not its body.
+- **Motion is short, and only opacity and transform.** 120ms for state, 170ms for
+  something coming into existence, one easing curve in `--ease`. Never animate a
+  property that costs a layout, and never bounce — brutalism can move, it should
+  not spring. `display` cannot be transitioned, so growth is a keyframe that runs
+  when the class lands.
+- **Every duration must die under `prefers-reduced-motion`.** The switch is
+  wholesale (`*, *::before, *::after`) so a transition added later cannot escape
+  it by accident, and `pnpm shoot` asks the browser to confirm it: it emulates the
+  preference and fails if anything still animates for longer than 50ms.
 - **The accent colour means "here" and nothing else.** The current step and the
   source it is reading. Never decoration, never a third meaning. Square corners,
   thick rules, monospace: if a change would soften the page, it is wrong.
