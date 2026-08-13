@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { scan } from "../src/compiler/lexer";
 import { parse } from "../src/compiler/parser";
+import { analyse } from "../src/compiler/semantics";
 import { preprocess } from "../src/compiler/preprocess";
 import type { AstNode, Expr, Span, Stmt } from "../src/compiler/types";
 import { childrenOf, labelOf } from "../src/compiler/types";
@@ -272,5 +273,143 @@ describe("parse", () => {
     const { steps } = parseSource("int main() { int x = 1; return x + 1; }");
     const produced = steps.flatMap((s) => s.produced);
     expect(new Set(produced).size).toBe(produced.length);
+  });
+});
+
+describe("analyse", () => {
+  function analyseSource(source: string) {
+    const pre = preprocess(source);
+    const scanned = scan(pre.text, pre.map);
+    const parsed = parse(scanned.tokens);
+    expect(parsed.error).toBeUndefined();
+    return analyse(parsed.program);
+  }
+
+  it("records a symbol for every declaration", () => {
+    const result = analyseSource("int main() { int x; char c; return x; }");
+    expect(result.error).toBeUndefined();
+    expect(result.symbols.map((s) => [s.name, s.role])).toEqual([
+      ["main", "function"],
+      ["x", "local"],
+      ["c", "local"],
+    ]);
+  });
+
+  it("gives each local its own frame slot and aligns the frame to 16", () => {
+    const result = analyseSource("int main() { int a; int b; return a; }");
+    const slots = result.symbols
+      .filter((s) => s.role !== "function")
+      .map((s) => s.slot);
+    expect(slots).toEqual([-4, -8]);
+    expect(result.frames.main).toBe(16);
+  });
+
+  it("restarts slot numbering for each function", () => {
+    const result = analyseSource(
+      "int helper(int a) { int b; return a + b; } int main() { int z; return helper(z); }",
+    );
+    const byName = new Map(result.symbols.map((s) => [s.name, s.slot]));
+    expect(byName.get("a")).toBe(-4);
+    expect(byName.get("z")).toBe(-4);
+  });
+
+  it("resolves a use to the innermost declaration", () => {
+    const result = analyseSource(
+      "int main() { int x; { int x; x = 1; } return x; }",
+    );
+    expect(result.error).toBeUndefined();
+    const xs = result.symbols.filter((s) => s.name === "x");
+    expect(xs.map((s) => s.depth)).toEqual([1, 2]);
+  });
+
+  it("rejects an undeclared name and points at it", () => {
+    const source = "int main() { return missing; }";
+    const { error } = analyseSource(source);
+    expect(error?.stage).toBe("semantics");
+    expect(spanText(source, error!.span)).toBe("missing");
+  });
+
+  it("rejects a redeclaration in the same scope", () => {
+    const { error } = analyseSource("int main() { int x; int x; return x; }");
+    expect(error?.message).toContain("already declared");
+  });
+
+  it("treats the body as the parameters' own scope, not a nested one", () => {
+    const { error } = analyseSource(
+      "int f(int a) { int a; return a; } int main() { return f(1); }",
+    );
+    expect(error?.message).toContain("already declared");
+  });
+
+  it("rejects a name reading itself in its own initialiser", () => {
+    const { error } = analyseSource("int main() { int x = x; return x; }");
+    expect(error?.message).toContain("not declared");
+  });
+
+  it("rejects a call with the wrong number of arguments", () => {
+    const { error } = analyseSource(
+      "int add(int a, int b) { return a + b; } int main() { return add(1); }",
+    );
+    expect(error?.message).toContain("takes 2 arguments, not 1");
+  });
+
+  it("rejects calling something that is not a function", () => {
+    const { error } = analyseSource("int main() { int x; return x(1); }");
+    expect(error?.message).toContain("is not a function");
+  });
+
+  it("rejects using a void result as a value", () => {
+    const { error } = analyseSource(
+      "void nothing() { return; } int main() { int x = nothing(); return x; }",
+    );
+    expect(error?.message).toContain("void");
+  });
+
+  it("rejects break outside a loop", () => {
+    const { error } = analyseSource("int main() { break; return 0; }");
+    expect(error?.message).toContain("outside a loop");
+  });
+
+  it("accepts break inside a loop", () => {
+    const { error } = analyseSource(
+      "int main() { while (1) { break; } return 0; }",
+    );
+    expect(error).toBeUndefined();
+  });
+
+  it("requires main", () => {
+    const { error } = analyseSource("int helper() { return 1; }");
+    expect(error?.message).toContain("no `main`");
+  });
+
+  it("allows a call to a function defined later", () => {
+    const { error } = analyseSource(
+      "int main() { return later(); } int later() { return 1; }",
+    );
+    expect(error).toBeUndefined();
+  });
+
+  it("allows recursion", () => {
+    const { error } = analyseSource(
+      "int fact(int n) { if (n < 2) { return 1; } return n * fact(n - 1); } int main() { return fact(5); }",
+    );
+    expect(error).toBeUndefined();
+  });
+
+  it("types arithmetic as int even when the operands are chars", () => {
+    const source = "int main() { char a; char b; return a + b; }";
+    const pre = preprocess(source);
+    const parsed = parse(scan(pre.text, pre.map).tokens);
+    const result = analyse(parsed.program);
+    const returned = parsed.program.functions[0].body.stmts[2];
+    if (returned.kind !== "Return" || !returned.value) throw new Error("no return");
+    expect(result.types[returned.value.id]).toBe("int");
+  });
+
+  it("scopes a for-header declaration to the loop", () => {
+    const { error } = analyseSource(
+      "int main() { for (int i = 0; i < 3; i = i + 1) { } return i; }",
+    );
+    expect(error?.message).toContain("`i` is not declared");
   });
 });
