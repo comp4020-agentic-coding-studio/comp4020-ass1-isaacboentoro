@@ -7,21 +7,31 @@ import type {
   SemanticsResult,
   Span,
 } from "./types";
+import { sizeOf } from "./ctypes";
 
 /**
  * Code generation: the list becomes instructions a machine could run.
  *
  * Two honest simplifications, both stated on the page. There is no register
- * allocator — every temporary gets a stack slot and `eax`/`ecx` are borrowed for
+ * allocator — every temporary gets a stack slot and `rax`/`rcx` are borrowed for
  * one instruction at a time, which is exactly what a naive compiler does and is
  * why unoptimised output is so full of loads and stores. And the output is
  * assembly text, not machine code: turning this into bytes is the assembler's
  * job, and joining several objects together is the linker's, neither of which
  * runs on this page.
+ *
+ * Width is the thing pointers add here. A char is one byte, an int is four and
+ * an address is eight, so the same IR instruction picks `al`, `eax` or `rax`
+ * depending on what it is moving — and a char read into an int has to be
+ * sign-extended rather than simply copied.
  */
 
-/** The System V AMD64 argument registers, 32-bit halves. */
-const ARG_REGISTERS = ["edi", "esi", "edx", "ecx", "r8d", "r9d"];
+/** System V AMD64 argument registers, at each width we can pass. */
+const ARG_REGISTERS: Record<number, string[]> = {
+  8: ["rdi", "rsi", "rdx", "rcx", "r8", "r9"],
+  4: ["edi", "esi", "edx", "ecx", "r8d", "r9d"],
+  1: ["dil", "sil", "dl", "cl", "r8b", "r9b"],
+};
 
 /** `setcc` suffix per comparison operator. */
 const SET_SUFFIX: Record<string, string> = {
@@ -38,6 +48,24 @@ const ARITHMETIC: Record<string, string> = {
   "-": "sub",
   "*": "imul",
 };
+
+/** `rax` / `eax` / `al`, depending on how many bytes are in play. */
+function reg(base: "a" | "c" | "d", width: number): string {
+  if (width >= 8) return `r${base}x`;
+  if (width >= 4) return `e${base}x`;
+  return `${base}l`;
+}
+
+/** The size prefix an immediate-to-memory move needs to be unambiguous. */
+function ptrSize(width: number): string {
+  if (width >= 8) return "qword ptr";
+  if (width >= 4) return "dword ptr";
+  return "byte ptr";
+}
+
+function widthOf(value: IRValue): number {
+  return value.kind === "const" ? 4 : value.width;
+}
 
 class Emitter {
   readonly log = new StepLog("codegen");
@@ -96,6 +124,60 @@ function offset(value: number): string {
   return value < 0 ? String(value) : `+${value}`;
 }
 
+/**
+ * Get a value into a register at the width the instruction wants.
+ *
+ * The interesting case is a char being used as an int: reading four bytes from a
+ * one-byte slot would take three bytes of whatever sits next to it, so the load
+ * has to sign-extend instead. `movsx` is that instruction, and it is the whole
+ * of C's integer promotion at machine level.
+ */
+function into(
+  out: Emitter,
+  base: "a" | "c" | "d",
+  want: number,
+  value: IRValue,
+  emit: (text: string, comment?: string) => void,
+): string {
+  const target = reg(base, want);
+  if (value.kind === "const") {
+    emit(`mov ${target}, ${value.value}`);
+    return target;
+  }
+
+  const have = widthOf(value);
+  if (have === want) {
+    emit(`mov ${target}, ${out.operand(value)}`);
+  } else if (have < want) {
+    emit(
+      `movsx ${target}, ${ptrSize(have)} ${out.operand(value)}`,
+      `${have}-byte value widened to ${want}, sign and all`,
+    );
+  } else {
+    emit(`mov ${target}, ${ptrSize(want)} ${out.operand(value)}`, "narrowed");
+  }
+  return target;
+}
+
+/**
+ * The right-hand operand of an instruction that can take one from memory.
+ *
+ * `add eax, [rbp-8]` and `cmp eax, 3` are both legal, so forcing every operand
+ * through a register would add an instruction per line for no reason. The one
+ * case that cannot be direct is a width mismatch, where the value has to be
+ * sign-extended before it can be used at all.
+ */
+function rhs(
+  out: Emitter,
+  want: number,
+  value: IRValue,
+  emit: (text: string, comment?: string) => void,
+): string {
+  if (value.kind === "const") return String(value.value);
+  if (widthOf(value) === want) return out.operand(value);
+  return into(out, "c", want, value, emit);
+}
+
 export function generate(
   instrs: IRInstr[],
   semantics: SemanticsResult,
@@ -133,13 +215,15 @@ export function generate(
     if (head.op !== "enter") continue;
 
     // Every temporary the lowering invented needs a slot of its own, below the
-    // locals the analyser already placed.
+    // locals the analyser already placed — and an 8-byte address needs 8 bytes,
+    // aligned, not the 4 an int would take.
     const temps = new Map<string, number>();
     let used = head.frame;
     for (const instr of body) {
       for (const value of valuesOf(instr)) {
         if (value.kind === "temp" && !temps.has(value.name)) {
-          used += 4;
+          const width = value.width;
+          used = Math.ceil((used + width) / width) * width;
           temps.set(value.name, -used);
         }
       }
@@ -165,13 +249,14 @@ export function generate(
       );
     }
     params.forEach((param, index) => {
-      const register = ARG_REGISTERS[index] ?? "eax";
+      const width = Math.max(1, sizeOf(param.type));
+      const register = ARG_REGISTERS[width >= 8 ? 8 : width >= 4 ? 4 : 1]?.[index] ?? "eax";
       out.line(
         "instr",
         `mov [rbp${offset(param.slot ?? 0)}], ${register}`,
         param.span,
         head.id,
-        `${param.name} arrives in a register and is spilled to its slot`,
+        `${param.name} arrives in a register and is spilled to its ${width}-byte slot`,
       );
     });
     log.add(
@@ -202,6 +287,12 @@ function valuesOf(instr: IRInstr): IRValue[] {
       return instr.dest ? [instr.dest, ...instr.args] : instr.args;
     case "return":
       return instr.value ? [instr.value] : [];
+    case "addr":
+      return [instr.dest];
+    case "load":
+      return [instr.dest, instr.from];
+    case "store":
+      return [instr.to, instr.src];
     default:
       return [];
   }
@@ -225,11 +316,12 @@ function emit(out: Emitter, instr: IRInstr): void {
     }
 
     case "move": {
+      const width = widthOf(instr.dest);
       if (instr.src.kind === "const") {
-        at(`mov dword ptr ${out.operand(instr.dest)}, ${instr.src.value}`);
+        at(`mov ${ptrSize(width)} ${out.operand(instr.dest)}, ${instr.src.value}`);
       } else {
-        at(`mov eax, ${out.operand(instr.src)}`, "load");
-        at(`mov ${out.operand(instr.dest)}, eax`, "store");
+        const source = into(out, "a", width, instr.src, at);
+        at(`mov ${out.operand(instr.dest)}, ${source}`, "store");
       }
       out.log.add(
         "store a value",
@@ -242,15 +334,73 @@ function emit(out: Emitter, instr: IRInstr): void {
       return;
     }
 
+    case "addr": {
+      at(
+        `lea ${reg("a", 8)}, ${out.operand({ kind: "var", symbol: instr.symbol, name: instr.name, width: 8 })}`,
+        "the address, not the contents",
+      );
+      at(`mov ${out.operand(instr.dest)}, ${reg("a", 8)}`);
+      out.log.add(
+        `address of ${instr.name}`,
+        "`lea` computes an address and hands it over without touching memory. Every other instruction here would have read what is there; this one only says where it is.",
+        instr.span,
+        out.since(mark),
+      );
+      return;
+    }
+
+    case "load": {
+      const address = into(out, "a", 8, instr.from, at);
+      const width = instr.width;
+      if (width >= 8) {
+        at(`mov rax, [${address}]`);
+      } else if (width >= 4) {
+        at(`mov eax, [${address}]`);
+      } else {
+        at(`movsx eax, byte ptr [${address}]`, "one byte, sign-extended");
+      }
+      at(`mov ${out.operand(instr.dest)}, ${reg("a", widthOf(instr.dest))}`);
+      out.log.add(
+        "read through a pointer",
+        `Two steps, always: fetch the address, then fetch what is at it. The brackets in \`[rax]\` are the dereference — everything else on this page is just working out what to put in rax.`,
+        instr.span,
+        out.since(mark),
+      );
+      return;
+    }
+
+    case "store": {
+      const address = into(out, "a", 8, instr.to, at);
+      const width = instr.width;
+      if (instr.src.kind === "const") {
+        at(`mov ${ptrSize(width)} [${address}], ${instr.src.value}`);
+      } else {
+        const source = into(out, "c", width, instr.src, at);
+        at(`mov [${address}], ${source}`);
+      }
+      out.log.add(
+        "write through a pointer",
+        "The address goes in one register, the value in another, and the write lands wherever the first one pointed. Nothing verifies that it was somewhere you own.",
+        instr.span,
+        out.since(mark),
+      );
+      return;
+    }
+
     case "binary": {
+      const width = widthOf(instr.dest);
       const arithmetic = ARITHMETIC[instr.operator];
+
       if (arithmetic) {
-        at(`mov eax, ${out.operand(instr.left)}`);
-        at(`${arithmetic} eax, ${out.operand(instr.right)}`);
-        at(`mov ${out.operand(instr.dest)}, eax`);
+        const left = into(out, "a", width, instr.left, at);
+        const right = rhs(out, width, instr.right, at);
+        at(`${arithmetic} ${left}, ${right}`);
+        at(`mov ${out.operand(instr.dest)}, ${left}`);
         out.log.add(
           `${instr.operator} becomes \`${arithmetic}\``,
-          "Load, operate, store. One IR instruction, three machine instructions, two of them only moving data around.",
+          width >= 8
+            ? "Sixty-four bits wide, because this one is arithmetic on an address rather than on a number you wrote."
+            : "Load, operate, store. One IR instruction, three machine instructions, two of them only moving data around.",
           instr.span,
           out.since(mark),
         );
@@ -258,13 +408,11 @@ function emit(out: Emitter, instr: IRInstr): void {
       }
 
       if (instr.operator === "/" || instr.operator === "%") {
-        at(`mov eax, ${out.operand(instr.left)}`);
+        into(out, "a", 4, instr.left, at);
         at("cdq", "sign-extend eax into edx:eax");
-        at(`mov ecx, ${out.operand(instr.right)}`);
+        into(out, "c", 4, instr.right, at);
         at("idiv ecx", "quotient in eax, remainder in edx");
-        at(
-          `mov ${out.operand(instr.dest)}, ${instr.operator === "/" ? "eax" : "edx"}`,
-        );
+        at(`mov ${out.operand(instr.dest)}, ${instr.operator === "/" ? "eax" : "edx"}`);
         out.log.add(
           `${instr.operator} becomes \`idiv\``,
           "Division is the awkward one: it insists on specific registers and computes the quotient and remainder together, so `/` and `%` are the same instruction reading different halves.",
@@ -274,12 +422,16 @@ function emit(out: Emitter, instr: IRInstr): void {
         return;
       }
 
+      // A comparison reads its operands at THEIR width — two addresses compare
+      // as 64-bit — but always answers with a 0 or 1 that is four bytes wide.
+      const compareWidth = Math.max(widthOf(instr.left), widthOf(instr.right));
       const suffix = SET_SUFFIX[instr.operator];
-      at(`mov eax, ${out.operand(instr.left)}`);
-      at(`cmp eax, ${out.operand(instr.right)}`, "sets the flags");
+      const left = into(out, "a", compareWidth, instr.left, at);
+      const right = rhs(out, compareWidth, instr.right, at);
+      at(`cmp ${left}, ${right}`, "sets the flags");
       at(`set${suffix} al`, "read one flag into a byte");
       at("movzx eax, al", "widen it to 0 or 1");
-      at(`mov ${out.operand(instr.dest)}, eax`);
+      at(`mov ${out.operand(instr.dest)}, ${reg("a", width)}`);
       out.log.add(
         `${instr.operator} becomes \`cmp\` and \`set${suffix}\``,
         "The processor has no `<`. It has a subtraction that sets flags, and a family of instructions that read those flags. A comparison is two steps, not one.",
@@ -290,15 +442,19 @@ function emit(out: Emitter, instr: IRInstr): void {
     }
 
     case "unary": {
-      at(`mov eax, ${out.operand(instr.operand)}`);
+      const width = widthOf(instr.dest);
+      const operandWidth = widthOf(instr.operand);
       if (instr.operator === "-") {
-        at("neg eax");
+        const value = into(out, "a", width, instr.operand, at);
+        at(`neg ${value}`);
+        at(`mov ${out.operand(instr.dest)}, ${value}`);
       } else {
-        at("cmp eax, 0");
+        const value = into(out, "a", operandWidth, instr.operand, at);
+        at(`cmp ${value}, 0`);
         at("sete al");
         at("movzx eax, al");
+        at(`mov ${out.operand(instr.dest)}, ${reg("a", width)}`);
       }
-      at(`mov ${out.operand(instr.dest)}, eax`);
       out.log.add(
         instr.operator === "-" ? "negate" : "logical not",
         instr.operator === "-"
@@ -323,12 +479,9 @@ function emit(out: Emitter, instr: IRInstr): void {
 
     case "branchFalse":
     case "branchTrue": {
-      if (instr.cond.kind === "const") {
-        at(`mov eax, ${instr.cond.value}`);
-      } else {
-        at(`mov eax, ${out.operand(instr.cond)}`);
-      }
-      at("cmp eax, 0");
+      const width = widthOf(instr.cond);
+      const value = into(out, "a", width, instr.cond, at);
+      at(`cmp ${value}, 0`);
       at(`${instr.op === "branchFalse" ? "je" : "jne"} ${instr.target}`);
       out.log.add(
         "branch",
@@ -341,11 +494,23 @@ function emit(out: Emitter, instr: IRInstr): void {
 
     case "call": {
       instr.args.forEach((arg, index) => {
-        const register = ARG_REGISTERS[index] ?? "eax";
-        at(`mov ${register}, ${out.operand(arg)}`, `argument ${index + 1}`);
+        // char arguments are promoted, as C promises; addresses stay 64-bit.
+        const width = widthOf(arg) >= 8 ? 8 : 4;
+        const register = ARG_REGISTERS[width]?.[index] ?? "eax";
+        if (arg.kind === "const") {
+          at(`mov ${register}, ${arg.value}`, `argument ${index + 1}`);
+        } else {
+          const source = into(out, "a", width, arg, at);
+          at(`mov ${register}, ${source}`, `argument ${index + 1}`);
+        }
       });
       at(`call ${instr.callee}`);
-      if (instr.dest) at(`mov ${out.operand(instr.dest)}, eax`, "the result comes back in eax");
+      if (instr.dest) {
+        at(
+          `mov ${out.operand(instr.dest)}, ${reg("a", widthOf(instr.dest))}`,
+          "the result comes back in eax",
+        );
+      }
       out.log.add(
         `call ${instr.callee}`,
         "The calling convention is a contract, not a language feature: arguments in these registers in this order, result in eax. Both sides have to agree or nothing works.",
@@ -357,12 +522,8 @@ function emit(out: Emitter, instr: IRInstr): void {
 
     case "return": {
       if (instr.value) {
-        at(
-          instr.value.kind === "const"
-            ? `mov eax, ${instr.value.value}`
-            : `mov eax, ${out.operand(instr.value)}`,
-          "the return value goes in eax",
-        );
+        const width = widthOf(instr.value) >= 8 ? 8 : 4;
+        into(out, "a", width, instr.value, at);
       }
       at("leave", "restore rsp and rbp in one instruction");
       at("ret", "pop the return address and jump to it");

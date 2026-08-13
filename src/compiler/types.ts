@@ -109,7 +109,9 @@ export type ScanResult = {
 
 // -------------------------------------------------------------------- parse
 
-export type CType = "int" | "char" | "void";
+export type { CType } from "./ctypes";
+import type { CType } from "./ctypes";
+import { typeName } from "./ctypes";
 
 type NodeBase = { id: string; span: Span };
 
@@ -119,7 +121,14 @@ export type Expr =
   | (NodeBase & { kind: "Ident"; name: string })
   | (NodeBase & { kind: "Unary"; op: string; operand: Expr })
   | (NodeBase & { kind: "Binary"; op: string; left: Expr; right: Expr })
-  | (NodeBase & { kind: "Assign"; name: string; nameSpan: Span; value: Expr })
+  /** `*p` — the one operator that turns an address back into a place. */
+  | (NodeBase & { kind: "Deref"; operand: Expr })
+  /** `&x` — the one that goes the other way. */
+  | (NodeBase & { kind: "AddressOf"; operand: Expr })
+  /** `a[i]`, which C defines as `*(a + i)` and which lowers exactly that way. */
+  | (NodeBase & { kind: "Index"; array: Expr; index: Expr })
+  /** The target is any lvalue now, not just a name: `*p = 1` and `a[i] = 2`. */
+  | (NodeBase & { kind: "Assign"; target: Expr; value: Expr })
   | (NodeBase & { kind: "Call"; callee: string; args: Expr[] });
 
 export type Stmt =
@@ -194,13 +203,26 @@ export function childrenOf(node: AstNode): AstNode[] {
       return [node.operand];
     case "Binary":
       return [node.left, node.right];
+    case "Deref":
+    case "AddressOf":
+      return [node.operand];
+    case "Index":
+      return [node.array, node.index];
     case "Assign":
-      return [node.value];
+      return [node.target, node.value];
     case "Call":
       return node.args;
     default:
       return [];
   }
+}
+
+/**
+ * The three expression shapes that name a place rather than a value. Everything
+ * that needs an address — assignment targets, `&` — asks this.
+ */
+export function isLvalue(expr: Expr): boolean {
+  return expr.kind === "Ident" || expr.kind === "Deref" || expr.kind === "Index";
 }
 
 /** The short text a tree node shows: the operator or name, not the kind. */
@@ -209,11 +231,11 @@ export function labelOf(node: AstNode): string {
     case "Program":
       return "program";
     case "Function":
-      return `${node.returnType} ${node.name}()`;
+      return `${typeName(node.returnType)} ${node.name}()`;
     case "Param":
-      return `${node.type} ${node.name}`;
+      return `${typeName(node.type)} ${node.name}`;
     case "VarDecl":
-      return `${node.type} ${node.name}`;
+      return `${typeName(node.type)} ${node.name}`;
     case "NumberLit":
       return String(node.value);
     case "CharLit":
@@ -224,8 +246,14 @@ export function labelOf(node: AstNode): string {
       return node.op;
     case "Binary":
       return node.op;
+    case "Deref":
+      return "*";
+    case "AddressOf":
+      return "&";
+    case "Index":
+      return "[ ]";
     case "Assign":
-      return `${node.name} =`;
+      return "=";
     case "Call":
       return `${node.callee}(…)`;
     case "Block":
@@ -279,9 +307,9 @@ export type SemanticsResult = {
 // ------------------------------------------------------------------------ ir
 
 export type IRValue =
-  | { kind: "temp"; name: string }
+  | { kind: "temp"; name: string; width: number }
   /** `symbol` is the identity; `name` is only for display, since names shadow. */
-  | { kind: "var"; symbol: string; name: string }
+  | { kind: "var"; symbol: string; name: string; width: number }
   | { kind: "const"; value: number };
 
 /** The instruction itself, without the identity every artefact also carries. */
@@ -295,7 +323,13 @@ export type IROp =
   | { op: "branchTrue"; cond: IRValue; target: string }
   | { op: "call"; dest?: IRValue; callee: string; args: IRValue[] }
   | { op: "return"; value?: IRValue }
-  | { op: "enter"; func: string; frame: number };
+  | { op: "enter"; func: string; frame: number }
+  /** `dest = &name` — the address of a slot, which is what an lvalue really is. */
+  | { op: "addr"; dest: IRValue; symbol: string; name: string }
+  /** `dest = *from`, reading `width` bytes. */
+  | { op: "load"; dest: IRValue; from: IRValue; width: number }
+  /** `*to = src`, writing `width` bytes. */
+  | { op: "store"; to: IRValue; src: IRValue; width: number };
 
 export type IRInstr = { id: string; span: Span } & IROp;
 

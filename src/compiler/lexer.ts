@@ -39,6 +39,9 @@ const PUNCTUATION = [
   ">",
   "=",
   "!",
+  "&",
+  "[",
+  "]",
   "(",
   ")",
   "{",
@@ -150,7 +153,7 @@ export function scan(text: string, map: number[]): ScanResult {
       stage: "scan",
       message: `stray \`${ch}\` in the input`,
       span: toOriginalSpan(map, i, i + 1),
-      hint: "This subset has no pointers, arrays, strings or bitwise operators.",
+      hint: "This subset has no strings, structs, floats or bitwise operators.",
     };
     break;
   }
