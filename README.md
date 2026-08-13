@@ -21,13 +21,16 @@ reflection.
 
 - `src/compiler/` — the compiler. One module per stage, all pure functions, no DOM.
   Every stage returns its artefacts **and** a `Step[]` describing what it did; that
-  step trace is what the page scrubs through.
+  step trace is what the page plays back. `ctypes.ts` is the only thing that
+  decides how big a type is.
 - `src/ui/` — the page. `app` owns the six per-stage players, `panes` builds the
   six views, `reveal` holds the one visibility rule and the local step numbering.
 - `src/pages/index.astro`, `src/styles/global.css` — the shell and the layout.
 - `spec/` — `invariants.test.ts` (shipped, untouched), `compiler.test.ts` (stage
   contracts), `interaction.test.ts` (the core interaction, as a property and driven
-  in jsdom), `page.test.ts` (what has to be true of the built HTML).
+  in jsdom), `page.test.ts` (what has to be true of the built HTML),
+  `machine.test.ts` (assemble with gcc and compare exit codes against it, using
+  the programs in `spec/programs/`).
 - `scripts/shoot.ts` — drives real Chromium at both marking viewports.
 
 ## Commands
@@ -50,8 +53,15 @@ there.
 
 `int`, `char`, `void`; locals; arithmetic and comparison; `if`/`else`, `while`,
 `for`, `break`, `continue`; functions with parameters, calls and recursion;
-`#define` (object- and function-like) and comments.
+`#define` (object- and function-like) and comments. Pointers and arrays:
+`&x`, `*p`, `a[i]`, `int *p`, `int a[10]`, array parameters that decay, pointer
+arithmetic scaled by the element size, and the null pointer constant.
 
-Deliberately absent, and said so on the page: pointers, arrays, structs, floats,
-`#include`, the standard library, register allocation, the assembler and the
-linker.
+Deliberately absent, and said so on the page: structs, floats, strings, bitwise
+operators, pointer subtraction, `&array`, more than one array dimension, function
+pointers, `#include`, the standard library, register allocation, bounds checking,
+the assembler and the linker.
+
+The emitted assembly is real: `gcc` assembles it, and `spec/machine.test.ts`
+builds and runs ten programs on every check, comparing each exit status against a
+binary gcc built from the same source.

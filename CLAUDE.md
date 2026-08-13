@@ -84,13 +84,32 @@ these, and each one is here because breaking it cost me something.
 - **No stage throws. Stages return a `Diagnostic`.** Bad input is content, not a
   crash: the failing stage explains itself and later panes say they were never
   reached.
-- **Out-of-subset C gets a named error, never a crash and never silence.** If the
-  answer is "this explainer does not do pointers", say that in the diagnostic.
+- **Out-of-subset C gets a named error, never a crash and never silence.** Pointer
+  subtraction, `&array`, two array dimensions and function pointers are all
+  refused by name, with a hint saying why. Silence or a crash would both be worse
+  than a diagnostic that admits the edge.
 - **Never `innerHTML` in `src/ui/`.** The source text is visitor input. Build
   nodes and set `textContent`.
 - **Simplifications are stated on the page, not just in comments.** No register
-  allocator, no assembler, no linker, no pointers. The `#limits` section is part
-  of the deliverable and `spec/page.test.ts` checks it is still there.
+  allocator, no assembler, no linker, no structs, no bounds checking. The
+  `#limits` section is part of the deliverable and `spec/page.test.ts` checks it
+  is still there.
+- **A type knows its size, and only `ctypes.ts` decides what that is.** `p + 1`
+  moves four bytes or one depending on the pointee, `a[i]` scales by the element,
+  and a frame slot is as big as the thing in it. Nothing else in the compiler may
+  hard-code 4.
+- **Lvalues and values are separate lowering paths.** `lowerAddress` produces a
+  place, `lowerExpr` produces a value, and the difference between `x = 1` and
+  `*p = 1` lives entirely in which one gets called. Collapsing them is how pointer
+  support turns into pointer bugs.
+- **`a[i]` lowers to the multiply and the add, never to one opaque step.** The
+  element size is the lesson; hiding it in an addressing mode would waste the only
+  stage where it is visible.
+- **String tests cannot see a wrong `setcc` or a wrong stride.** `spec/machine.test.ts`
+  assembles the emitted code with real gcc, runs it, and compares the exit status
+  against a binary gcc built from the same source. Add a program to
+  `spec/programs/` whenever the compiler learns something new. It skips where gcc
+  is missing, so read the skip rather than assuming it ran.
 - **Presets are load-bearing.** Nobody types C on a 390px phone, so every preset
   must compile (except the one deliberately named "A mistake"), and
   `spec/interaction.test.ts` compiles all of them.

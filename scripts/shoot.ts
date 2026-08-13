@@ -361,8 +361,10 @@ async function main(): Promise<void> {
 
     // Put a working program back before the accessibility scan and screenshot,
     // with two stages mid-play so the shot shows the mechanic rather than the end.
+    // The array example, because pointer arithmetic is the thing worth looking at.
     await page.$$eval("#presets .preset", (buttons) => {
-      (buttons[3] as HTMLButtonElement).click();
+      const arrays = buttons.find((b) => b.textContent?.includes("Arrays"));
+      (arrays as HTMLButtonElement | undefined)?.click();
     });
     await wait(300);
     await scrubTo(page, "parse", 8);

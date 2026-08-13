@@ -23,7 +23,7 @@ const BLURBS: Record<(typeof STAGES)[number], string> = {
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
     <meta
       name="description"
-      content="An interactive explainer. Type C, then play each stage of the compiler and watch it rewrite your code six times."
+      content="An interactive explainer. Type C — pointers and arrays included — then play each stage of the compiler and watch it rewrite your code six times."
     />
   </head>
   <body>
@@ -52,9 +52,10 @@ const BLURBS: Record<(typeof STAGES)[number], string> = {
           <h2 class="section-name" id="source-heading">Source</h2>
           <p class="section-blurb">
             A subset of C: <code>int</code> and <code>char</code>, locals,
-            arithmetic, <code>if</code>, <code>while</code>, <code>for</code>, and
-            functions that can call each other. Edit it and all six stages
-            recompile.
+            arithmetic, <code>if</code>, <code>while</code>, <code>for</code>,
+            functions that can call each other, and pointers and arrays —
+            <code>&amp;x</code>, <code>*p</code>, <code>a[i]</code>. Edit it and
+            all six stages recompile.
           </p>
         </div>
 
@@ -157,8 +158,19 @@ const BLURBS: Record<(typeof STAGES)[number], string> = {
         </div>
         <ul class="limits">
           <li>
-            No pointers, arrays, structs or floats. Declarations are simple:
-            <code>int x;</code> or <code>int x = 1;</code>
+            No structs, floats, strings or bitwise operators. Declarations stay
+            simple — <code>int x;</code>, <code>int *p;</code>,
+            <code>int a[10];</code> — so no function pointers, no
+            <code>int (*p)[10]</code>, and one array dimension only.
+          </li>
+          <li>
+            No bounds checking, because C has none. <code>a[5]</code> on a
+            three-element array compiles quietly, and every stage below will show
+            you it doing so.
+          </li>
+          <li>
+            No pointer subtraction and no <code>&amp;array</code>. Both are real C;
+            both need type rules this explainer stops short of.
           </li>
           <li>
             No standard library and no <code>#include</code>. Every function has
@@ -171,7 +183,9 @@ const BLURBS: Record<(typeof STAGES)[number], string> = {
           </li>
           <li>
             No assembler and no linker. The last stage is assembly text; turning
-            it into an executable is two more stages that do not run here.
+            it into an executable is two more stages that do not run here. It does
+            assemble, though — <code>gcc</code> accepts it, and a test builds and
+            runs it on every check.
           </li>
         </ul>
       </section>

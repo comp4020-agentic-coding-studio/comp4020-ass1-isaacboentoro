@@ -142,7 +142,7 @@ describe("honesty about the subset", () => {
   const text = document.body.textContent ?? "";
 
   it("says on the page what is left out", () => {
-    for (const missing of ["pointers", "linker", "register allocation"]) {
+    for (const missing of ["structs", "linker", "register allocation", "bounds"]) {
       expect(text.toLowerCase(), missing).toContain(missing);
     }
   });

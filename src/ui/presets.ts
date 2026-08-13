@@ -88,6 +88,67 @@ int main() {
 }`,
   },
   {
+    name: "Pointers",
+    about: "& takes an address, * follows one",
+    source: `void swap(int *a, int *b) {
+  int t = *a;
+  *a = *b;
+  *b = t;
+}
+
+int main() {
+  int x = 7;
+  int y = 100;
+  swap(&x, &y);
+  return y - x;
+}`,
+  },
+  {
+    name: "Arrays",
+    about: "a[i] is really *(a + i * 4)",
+    source: `int main() {
+  int a[5];
+  for (int i = 0; i < 5; i = i + 1) {
+    a[i] = i * i;
+  }
+  return a[4];
+}`,
+  },
+  {
+    name: "Decay",
+    about: "an array argument is only an address",
+    source: `int sum(int *p, int n) {
+  int total = 0;
+  int *end = p + n;
+  while (p < end) {
+    total = total + *p;
+    p = p + 1;
+  }
+  return total;
+}
+
+int main() {
+  int a[4];
+  a[0] = 1;
+  a[1] = 2;
+  a[2] = 3;
+  a[3] = 4;
+  // a becomes &a[0] here; the length is not carried with it
+  return sum(a, 4);
+}`,
+  },
+  {
+    name: "No bounds check",
+    about: "nothing stops you leaving the array",
+    source: `int main() {
+  int a[3];
+  a[0] = 1;
+  // a[5] compiles. Every stage below is happy with it.
+  a[5] = 99;
+  return a[0];
+}`,
+  },
+  {
     name: "A mistake",
     about: "which stage catches which kind of bug",
     source: `int main() {
