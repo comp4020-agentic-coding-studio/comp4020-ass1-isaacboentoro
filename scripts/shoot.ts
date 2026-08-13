@@ -13,8 +13,10 @@
 
 import { createServer } from "node:http";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { gzipSync } from "node:zlib";
 import { extname, join, normalize, resolve } from "node:path";
+import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
 
 const DIST = resolve("dist");
@@ -72,6 +74,59 @@ function findChrome(): string {
   return found;
 }
 
+type Page = Awaited<ReturnType<Awaited<ReturnType<typeof puppeteer.launch>>["newPage"]>>;
+
+async function readCursor(page: Page): Promise<number> {
+  return page.$eval("#scrubber", (el) => Number((el as HTMLInputElement).value));
+}
+
+type Violation = { id: string; impact: string; help: string; nodes: number };
+
+/**
+ * Nothing in the course CI measures accessibility, so this is the sensor for it.
+ * Only serious and critical violations fail the run — the lower tiers are worth
+ * reading but not worth blocking a build over.
+ */
+async function axeScan(page: Page): Promise<Violation[]> {
+  const axePath = createRequire(import.meta.url).resolve("axe-core");
+  await page.addScriptTag({ path: axePath });
+  return page.evaluate(async () => {
+    const axe = (globalThis as unknown as { axe: { run: (o: unknown) => Promise<{ violations: { id: string; impact: string | null; help: string; nodes: unknown[] }[] }> } }).axe;
+    const results = await axe.run({
+      runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] },
+    });
+    return results.violations
+      .filter((violation) => violation.impact === "serious" || violation.impact === "critical")
+      .map((violation) => ({
+        id: violation.id,
+        impact: violation.impact ?? "unknown",
+        help: violation.help,
+        nodes: violation.nodes.length,
+      }));
+  });
+}
+
+/**
+ * The compiler runs in the visitor's browser, so the whole thing has to arrive
+ * over their connection. A budget keeps that honest: the moment this creeps up,
+ * the "works on a slow connection" claim needs re-earning.
+ */
+const GZIP_BUDGET_BYTES = 60_000;
+
+async function bundleWeight(): Promise<{ total: number; detail: string }> {
+  const assets = join(DIST, "_astro");
+  const files = existsSync(assets) ? await readdir(assets) : [];
+  let total = 0;
+  const parts: string[] = [];
+  for (const name of files) {
+    const bytes = await readFile(join(assets, name));
+    const gzipped = gzipSync(bytes).length;
+    total += gzipped;
+    parts.push(`${extname(name).slice(1)} ${Math.round(gzipped / 100) / 10}kB`);
+  }
+  return { total, detail: parts.join(", ") };
+}
+
 async function main(): Promise<void> {
   if (!existsSync(join(DIST, "index.html"))) {
     throw new Error("dist/index.html is missing — run `pnpm build` first.");
@@ -86,6 +141,16 @@ async function main(): Promise<void> {
 
   const problems: string[] = [];
   const report: string[] = [];
+
+  const weight = await bundleWeight();
+  report.push(
+    `bundle: ${Math.round(weight.total / 100) / 10}kB gzipped (${weight.detail}), budget ${GZIP_BUDGET_BYTES / 1000}kB`,
+  );
+  if (weight.total > GZIP_BUDGET_BYTES) {
+    problems.push(
+      `bundle is ${weight.total} bytes gzipped, over the ${GZIP_BUDGET_BYTES} budget`,
+    );
+  }
 
   for (const viewport of VIEWPORTS) {
     const page = await browser.newPage();
@@ -135,6 +200,86 @@ async function main(): Promise<void> {
     if (marked === 0) {
       problems.push(`[${viewport.name}] no source highlight at the halfway step`);
     }
+
+    // The keyboard is a first-class way in, not an afterthought: a native range
+    // gives arrows and Home/End, and this is the check that it stayed native.
+    await page.focus("#scrubber");
+    const before = await readCursor(page);
+    await page.keyboard.press("ArrowRight");
+    const afterRight = await readCursor(page);
+    await page.keyboard.press("Home");
+    const afterHome = await readCursor(page);
+    if (afterRight !== before + 1) {
+      problems.push(
+        `[${viewport.name}] ArrowRight moved the cursor ${before} -> ${afterRight}`,
+      );
+    }
+    if (afterHome !== 0) {
+      problems.push(`[${viewport.name}] Home did not go to the first step`);
+    }
+
+    // The marker resizes mid-interaction. The cursor must survive it, because
+    // the layout is CSS and the state is not.
+    await page.$eval("#scrubber", (el) => {
+      const input = el as HTMLInputElement;
+      input.value = "17";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await page.setViewport({ width: 700, height: 900 });
+    await page.setViewport({ width: viewport.width, height: viewport.height });
+    const afterResize = await readCursor(page);
+    if (afterResize !== 17) {
+      problems.push(
+        `[${viewport.name}] resizing reset the cursor from 17 to ${afterResize}`,
+      );
+    }
+
+    // Exactly one pane visible on a phone, all six on a desktop.
+    const visiblePanes = await page.$$eval(".pane", (panes) =>
+      panes.filter((pane) => (pane as HTMLElement).offsetParent !== null).length,
+    );
+    const expectedPanes = viewport.width < 960 ? 1 : 6;
+    if (visiblePanes !== expectedPanes) {
+      problems.push(
+        `[${viewport.name}] ${visiblePanes} panes visible, expected ${expectedPanes}`,
+      );
+    }
+
+    // A program that does not compile has to explain itself, not go blank.
+    await page.$$eval("#presets .preset", (buttons) => {
+      const broken = buttons.find((b) => b.textContent?.includes("A mistake"));
+      (broken as HTMLButtonElement | undefined)?.click();
+    });
+    await new Promise((done) => setTimeout(done, 250));
+    const diagnostics = await page.$$eval(".diagnostic-message", (nodes) =>
+      nodes.map((node) => node.textContent ?? ""),
+    );
+    const neverReached = await page.$$eval(".pane-note", (nodes) =>
+      nodes.filter((node) => node.textContent?.includes("Never reached")).length,
+    );
+    if (diagnostics.length === 0) {
+      problems.push(`[${viewport.name}] a failing program showed no diagnostic`);
+    }
+    if (neverReached === 0) {
+      problems.push(`[${viewport.name}] no stage reported itself as never reached`);
+    }
+
+    // Put the good program back before the accessibility scan and screenshot.
+    await page.$$eval("#presets .preset", (buttons) => {
+      (buttons[0] as HTMLButtonElement).click();
+    });
+    await new Promise((done) => setTimeout(done, 250));
+
+    const violations = await axeScan(page);
+    for (const violation of violations) {
+      problems.push(
+        `[${viewport.name}] axe ${violation.impact}: ${violation.id} on ${violation.nodes} node(s) — ${violation.help}`,
+      );
+    }
+    report.push(
+      `${viewport.name} accessibility: ${violations.length === 0 ? "no serious or critical axe violations" : `${violations.length} violation(s)`}` +
+        `, keyboard: arrows and Home work, cursor survives a resize, diagnostics: "${diagnostics[0] ?? "none"}"`,
+    );
 
     const shot = join(OUT, `${viewport.name}.png`);
     await page.screenshot({ path: shot as `${string}.png`, fullPage: true });

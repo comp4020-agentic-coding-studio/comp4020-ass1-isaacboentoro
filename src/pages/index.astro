@@ -123,7 +123,14 @@ const BLURBS: Record<(typeof STAGES)[number], string> = {
                   </h3>
                   <p class="pane-blurb">{BLURBS[stage]}</p>
                 </header>
-                <div class="pane-scroll" id={`pane-${stage}`} />
+                {/* A scrollable region needs to be focusable, or a keyboard
+                    cannot reach content that overflows it. */}
+                <div
+                  class="pane-scroll"
+                  id={`pane-${stage}`}
+                  tabindex="0"
+                  aria-labelledby={`pane-heading-${stage}`}
+                />
               </section>
             ))
           }
