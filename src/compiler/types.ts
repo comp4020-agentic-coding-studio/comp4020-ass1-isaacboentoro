@@ -126,7 +126,7 @@ export type Stmt =
   | (NodeBase & { kind: "VarDecl"; type: CType; name: string; init?: Expr })
   | (NodeBase & { kind: "ExprStmt"; expr: Expr })
   | (NodeBase & { kind: "Return"; value?: Expr })
-  | (NodeBase & { kind: "If"; cond: Expr; then: Stmt; otherwise?: Stmt })
+  | (NodeBase & { kind: "If"; cond: Expr; thenBranch: Stmt; otherwise?: Stmt })
   | (NodeBase & { kind: "While"; cond: Expr; body: Stmt })
   | (NodeBase & {
       kind: "For";
@@ -176,8 +176,8 @@ export function childrenOf(node: AstNode): AstNode[] {
       return node.value ? [node.value] : [];
     case "If":
       return node.otherwise
-        ? [node.cond, node.then, node.otherwise]
-        : [node.cond, node.then];
+        ? [node.cond, node.thenBranch, node.otherwise]
+        : [node.cond, node.thenBranch];
     case "While":
       return [node.cond, node.body];
     case "For": {
@@ -254,6 +254,8 @@ export type SymbolInfo = {
   /** Function parameters and locals live in a frame; functions don't. */
   role: "function" | "param" | "local";
   depth: number;
+  /** The function whose frame holds this name; unset for functions themselves. */
+  owner?: string;
   span: Span;
   /** Byte offset from the frame pointer, assigned here and reused by codegen. */
   slot?: number;
@@ -276,20 +278,24 @@ export type SemanticsResult = {
 
 export type IRValue =
   | { kind: "temp"; name: string }
-  | { kind: "var"; name: string }
+  /** `symbol` is the identity; `name` is only for display, since names shadow. */
+  | { kind: "var"; symbol: string; name: string }
   | { kind: "const"; value: number };
 
-export type IRInstr = { id: string; span: Span } & (
+/** The instruction itself, without the identity every artefact also carries. */
+export type IROp =
   | { op: "label"; name: string }
   | { op: "move"; dest: IRValue; src: IRValue }
   | { op: "binary"; dest: IRValue; operator: string; left: IRValue; right: IRValue }
   | { op: "unary"; dest: IRValue; operator: string; operand: IRValue }
   | { op: "jump"; target: string }
   | { op: "branchFalse"; cond: IRValue; target: string }
+  | { op: "branchTrue"; cond: IRValue; target: string }
   | { op: "call"; dest?: IRValue; callee: string; args: IRValue[] }
   | { op: "return"; value?: IRValue }
-  | { op: "enter"; func: string; frame: number }
-);
+  | { op: "enter"; func: string; frame: number };
+
+export type IRInstr = { id: string; span: Span } & IROp;
 
 export type IRResult = {
   instrs: IRInstr[];

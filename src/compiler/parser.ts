@@ -292,15 +292,15 @@ class Parser {
     this.expect("(", "after `if`");
     const cond = this.parseExpression();
     this.expect(")", "after the condition");
-    const then = this.parseStatement();
+    const thenBranch = this.parseStatement();
     let otherwise: Stmt | undefined;
     if (this.accept("else")) otherwise = this.parseStatement();
     return {
       id,
       kind: "If",
-      span: spanOver(keyword.span, (otherwise ?? then).span),
+      span: spanOver(keyword.span, (otherwise ?? thenBranch).span),
       cond,
-      then,
+      thenBranch,
       ...(otherwise ? { otherwise } : {}),
     };
   }

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { scan } from "../src/compiler/lexer";
 import { parse } from "../src/compiler/parser";
+import { formatInstr } from "../src/compiler/ir";
+import { compile } from "../src/compiler/pipeline";
 import { analyse } from "../src/compiler/semantics";
 import { preprocess } from "../src/compiler/preprocess";
 import type { AstNode, Expr, Span, Stmt } from "../src/compiler/types";
@@ -301,7 +303,8 @@ describe("analyse", () => {
       .filter((s) => s.role !== "function")
       .map((s) => s.slot);
     expect(slots).toEqual([-4, -8]);
-    expect(result.frames.main).toBe(16);
+    // Only the named locals; temporaries and alignment are codegen's problem.
+    expect(result.frames.main).toBe(8);
   });
 
   it("restarts slot numbering for each function", () => {
@@ -411,5 +414,219 @@ describe("analyse", () => {
       "int main() { for (int i = 0; i < 3; i = i + 1) { } return i; }",
     );
     expect(error?.message).toContain("`i` is not declared");
+  });
+});
+
+describe("lower to IR", () => {
+  function irOf(source: string): string[] {
+    const result = compile(source);
+    expect(result.error).toBeUndefined();
+    return result.ir.instrs.map(formatInstr);
+  }
+
+  function inMain(source: string): string[] {
+    const lines = irOf(source);
+    const start = lines.findIndex((line) => line.startsWith("main:"));
+    return lines.slice(start + 1);
+  }
+
+  it("flattens a nested expression into three-address form", () => {
+    expect(inMain("int main() { return 1 + 2 * 3; }")).toEqual([
+      "t0 = 2 * 3",
+      "t1 = 1 + t0",
+      "return t1",
+    ]);
+  });
+
+  it("turns an if into one conditional jump and a label", () => {
+    expect(inMain("int main() { int x; if (x) { x = 1; } return x; }")).toEqual([
+      "if !x jump .Lmain0_endif",
+      "x = 1",
+      ".Lmain0_endif:",
+      "return x",
+    ]);
+  });
+
+  it("gives if/else a jump over the else branch", () => {
+    const ir = inMain(
+      "int main() { int x; if (x) { x = 1; } else { x = 2; } return x; }",
+    );
+    expect(ir).toEqual([
+      "if !x jump .Lmain0_else",
+      "x = 1",
+      "jump .Lmain1_endif",
+      ".Lmain0_else:",
+      "x = 2",
+      ".Lmain1_endif:",
+      "return x",
+    ]);
+  });
+
+  it("turns a while into a backward jump", () => {
+    const ir = inMain("int main() { int x; while (x) { x = x - 1; } return x; }");
+    expect(ir[0]).toBe(".Lmain0_while:");
+    expect(ir).toContain("jump .Lmain0_while");
+    expect(ir.at(-2)).toBe(".Lmain1_endwhile:");
+  });
+
+  it("puts the for-update after the body so continue still runs it", () => {
+    const ir = inMain(
+      "int main() { int s = 0; for (int i = 0; i < 3; i = i + 1) { continue; } return s; }",
+    );
+    const step = ir.indexOf(".Lmain1_forstep:");
+    const jumpBack = ir.indexOf("jump .Lmain0_for");
+    expect(ir).toContain("jump .Lmain1_forstep");
+    expect(step).toBeLessThan(jumpBack);
+  });
+
+  it("sends break to the loop's exit label", () => {
+    const ir = inMain("int main() { while (1) { break; } return 0; }");
+    expect(ir).toContain("jump .Lmain1_endwhile");
+  });
+
+  it("short-circuits && into a branch that skips the right operand", () => {
+    const ir = inMain("int main() { int a; int b; return a && b; }");
+    expect(ir).toEqual([
+      "t0 = 0",
+      "if !a jump .Lmain0_and",
+      "if !b jump .Lmain0_and",
+      "t0 = 1",
+      ".Lmain0_and:",
+      "return t0",
+    ]);
+  });
+
+  it("short-circuits || the other way around", () => {
+    const ir = inMain("int main() { int a; int b; return a || b; }");
+    expect(ir[0]).toBe("t0 = 1");
+    expect(ir[1]).toBe("if a jump .Lmain0_or");
+    expect(ir).toContain("t0 = 0");
+  });
+
+  it("evaluates call arguments into temporaries before the call", () => {
+    const ir = inMain(
+      "int add(int a, int b) { return a + b; } int main() { return add(1 + 1, 2); }",
+    );
+    expect(ir).toEqual(["t0 = 1 + 1", "t1 = call add(t0, 2)", "return t1"]);
+  });
+
+  it("emits a return even when the source forgot one", () => {
+    const ir = inMain("int main() { int x; }");
+    expect(ir.at(-1)).toBe("return 0");
+  });
+
+  it("names labels per function so two functions cannot collide", () => {
+    const ir = irOf(
+      "int f(int n) { if (n) { return 1; } return 0; } int main() { if (1) { return 1; } return 0; }",
+    );
+    const labels = ir.filter((line) => line.startsWith(".L"));
+    expect(new Set(labels).size).toBe(labels.length);
+  });
+
+  it("restarts temporaries per function", () => {
+    const ir = irOf(
+      "int f() { return 1 + 1; } int main() { return 2 + 2; }",
+    );
+    expect(ir.filter((line) => line.startsWith("t0 =")).length).toBe(2);
+  });
+
+  it("keeps every instruction's span inside the source", () => {
+    const source = "int main() { int x = 1; while (x) { x = x - 1; } return x; }";
+    const result = compile(source);
+    for (const instr of result.ir.instrs) {
+      expect(instr.span.start).toBeGreaterThanOrEqual(0);
+      expect(instr.span.end).toBeLessThanOrEqual(source.length);
+    }
+  });
+});
+
+describe("generate assembly", () => {
+  function asmOf(source: string): string[] {
+    const result = compile(source);
+    expect(result.error).toBeUndefined();
+    return result.codegen.lines.map((line) => line.text);
+  }
+
+  it("opens with directives and a global entry point", () => {
+    const asm = asmOf("int main() { return 0; }");
+    expect(asm.slice(0, 3)).toEqual([
+      ".intel_syntax noprefix",
+      ".text",
+      ".globl main",
+    ]);
+  });
+
+  it("emits a prologue that reserves room for locals and temporaries", () => {
+    const asm = asmOf("int main() { int a; int b; return a + b; }");
+    expect(asm).toContain("push rbp");
+    expect(asm).toContain("mov rbp, rsp");
+    // 8 bytes of locals plus one temporary, aligned up to 16.
+    expect(asm).toContain("sub rsp, 16");
+  });
+
+  it("spills incoming arguments from registers to their slots", () => {
+    const asm = asmOf(
+      "int add(int a, int b) { return a + b; } int main() { return add(1, 2); }",
+    );
+    expect(asm).toContain("mov [rbp-4], edi");
+    expect(asm).toContain("mov [rbp-8], esi");
+  });
+
+  it("passes arguments in the System V registers", () => {
+    const asm = asmOf(
+      "int add(int a, int b) { return a + b; } int main() { return add(1, 2); }",
+    );
+    expect(asm).toContain("mov edi, 1");
+    expect(asm).toContain("mov esi, 2");
+    expect(asm).toContain("call add");
+  });
+
+  it("turns a comparison into cmp plus setcc", () => {
+    const asm = asmOf("int main() { int a; return a < 3; }");
+    expect(asm).toContain("cmp eax, 3");
+    expect(asm).toContain("setl al");
+    expect(asm).toContain("movzx eax, al");
+  });
+
+  it("uses idiv for both / and %", () => {
+    const div = asmOf("int main() { int a; return a / 2; }");
+    expect(div).toContain("cdq");
+    expect(div).toContain("idiv ecx");
+    // The quotient comes out of eax, into the temporary's slot.
+    expect(div).toContain("mov [rbp-8], eax");
+
+    const mod = asmOf("int main() { int a; return a % 2; }");
+    // The remainder comes out of edx instead, and is the only difference.
+    expect(mod).toContain("idiv ecx");
+    expect(mod).toContain("mov [rbp-8], edx");
+    expect(mod).not.toContain("mov [rbp-8], eax");
+  });
+
+  it("stores a constant without borrowing a register", () => {
+    const asm = asmOf("int main() { int x = 7; return x; }");
+    expect(asm).toContain("mov dword ptr [rbp-4], 7");
+  });
+
+  it("ends every function with leave and ret", () => {
+    const asm = asmOf("int main() { return 0; }");
+    expect(asm.at(-2)).toBe("leave");
+    expect(asm.at(-1)).toBe("ret");
+  });
+
+  it("gives every temporary a distinct slot", () => {
+    const result = compile("int main() { return 1 + 2 * 3 + 4; }");
+    const stores = result.codegen.lines
+      .map((line) => /^mov \[(rbp[-+]\d+)\], eax$/.exec(line.text)?.[1])
+      .filter((slot): slot is string => Boolean(slot));
+    expect(new Set(stores).size).toBe(stores.length);
+  });
+
+  it("attributes every line to the IR instruction that caused it", () => {
+    const result = compile("int main() { int x = 1; return x; }");
+    const irIds = new Set(result.ir.instrs.map((instr) => instr.id));
+    for (const line of result.codegen.lines) {
+      if (line.kind === "directive") continue;
+      expect(irIds.has(line.from ?? "")).toBe(true);
+    }
   });
 });

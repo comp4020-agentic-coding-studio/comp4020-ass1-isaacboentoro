@@ -81,6 +81,7 @@ class Analyser {
       type,
       role,
       depth: this.scopes.length - 1,
+      ...(this.currentFunction ? { owner: this.currentFunction.name } : {}),
       span,
       ...(signature ? { signature } : {}),
     };
@@ -166,12 +167,12 @@ class Analyser {
     // nested one — in C, redeclaring a parameter in the body is an error.
     for (const stmt of func.body.stmts) this.analyseStmt(stmt);
 
-    // Round up so the frame stays 16-byte aligned, as the ABI requires.
-    const frame = Math.ceil(this.frameUsed / 16) * 16;
-    this.frames[func.name] = frame;
+    // Only the named locals are sized here. The temporaries that lowering is
+    // about to invent are not known yet, so alignment waits for codegen.
+    this.frames[func.name] = this.frameUsed;
     this.log.add(
       `lay out ${func.name}'s frame`,
-      `${this.frameUsed} bytes of locals, rounded up to ${frame} to keep the stack 16-byte aligned. Codegen will subtract exactly this much.`,
+      `${this.frameUsed} bytes for the names you wrote. The compiler is not finished spending stack — the next stage invents temporaries that need slots too.`,
       func.span,
       [],
     );
@@ -230,7 +231,7 @@ class Analyser {
 
       case "If": {
         this.requireValue(this.analyseExpr(stmt.cond), stmt.cond.span, "a condition");
-        this.analyseStmt(stmt.then);
+        this.analyseStmt(stmt.thenBranch);
         if (stmt.otherwise) this.analyseStmt(stmt.otherwise);
         return;
       }
