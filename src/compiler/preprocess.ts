@@ -164,9 +164,15 @@ export function preprocess(source: string): PreprocessResult {
 
         if (call) {
           const span = { start: i, end: call.end };
-          const body = macro.params
-            ? substitute(macro, call.args)
-            : macro.body;
+          // Expansion output is rescanned, as a real preprocessor does, so
+          // `DOUBLE(SIZE)` expands both names rather than leaving `SIZE` behind.
+          const body = expandFully(
+            macro.params
+              ? substitute(macro, call.args.map((arg) => expandFully(arg, macros, 0)))
+              : macro.body,
+            macros,
+            0,
+          );
           flushTo(i, call.end);
           emitGenerated(body, i);
           const id = `pp:${expansions.length}`;
@@ -179,7 +185,7 @@ export function preprocess(source: string): PreprocessResult {
           });
           log.add(
             `expand ${name}`,
-            "Macro expansion is text substitution, not a function call — the compiler never sees the name.",
+            "Macro expansion is text substitution, not a function call. Nothing is evaluated and no parentheses are added for you — which is how macros produce arithmetic nobody wrote.",
             span,
             [id],
           );
@@ -292,14 +298,73 @@ function readArguments(
   return null;
 }
 
+/** How deep a macro may expand into another before we call it a loop. */
+const MAX_EXPANSION_DEPTH = 8;
+
+/**
+ * Expand every macro in a fragment of already-generated text. No span tracking:
+ * everything here is attributed to the call site that produced it anyway.
+ */
+function expandFully(
+  text: string,
+  macros: Map<string, Macro>,
+  depth: number,
+): string {
+  if (depth >= MAX_EXPANSION_DEPTH || macros.size === 0) return text;
+
+  let out = "";
+  let i = 0;
+  let changed = false;
+
+  while (i < text.length) {
+    const ch = text[i];
+    if (!IDENT_START.test(ch) || isIdentPart(text[i - 1])) {
+      out += ch;
+      i += 1;
+      continue;
+    }
+
+    let j = i;
+    while (j < text.length && IDENT_PART.test(text[j])) j += 1;
+    const name = text.slice(i, j);
+    const macro = macros.get(name);
+    if (!macro) {
+      out += name;
+      i = j;
+      continue;
+    }
+
+    if (macro.params) {
+      const call = readArguments(text, j);
+      if (!call) {
+        out += name;
+        i = j;
+        continue;
+      }
+      out += substitute(macro, call.args);
+      i = call.end;
+    } else {
+      out += macro.body;
+      i = j;
+    }
+    changed = true;
+  }
+
+  return changed ? expandFully(out, macros, depth + 1) : out;
+}
+
+/**
+ * Substitution is textual and adds nothing. That is not a shortcut — it is the
+ * behaviour, and it is why `#define TWICE(x) x + x` then `TWICE(1) * 3` gives 7
+ * rather than 6. Wrapping arguments in parentheses here would hide the trap.
+ */
 function substitute(macro: Macro, args: string[]): string {
   const params = macro.params ?? [];
   let body = macro.body;
   params.forEach((param, index) => {
-    const argument = args[index] ?? "";
     body = body.replace(
       new RegExp(`\\b${escapeRegExp(param)}\\b`, "g"),
-      `(${argument})`,
+      args[index] ?? "",
     );
   });
   return body;

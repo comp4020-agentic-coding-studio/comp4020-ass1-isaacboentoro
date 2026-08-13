@@ -47,9 +47,16 @@ describe("preprocess", () => {
     expect(result.expansions.map((e) => e.kind)).toContain("expansion");
   });
 
-  it("substitutes a function-like macro and parenthesises arguments", () => {
+  it("substitutes a function-like macro argument verbatim", () => {
     const result = preprocess("#define TWICE(x) ((x)+(x))\nint y = TWICE(1+2);");
-    expect(result.text).toContain("((1+2))+((1+2))");
+    expect(result.text).toContain("((1+2)+(1+2))");
+  });
+
+  it("adds no parentheses of its own, so the classic macro trap survives", () => {
+    // TWICE(1) * 3 becomes 1 + 1 * 3, which is 4 — not 6. A preprocessor that
+    // quietly parenthesised arguments would hide this.
+    const result = preprocess("#define TWICE(x) x + x\nint y = TWICE(1) * 3;");
+    expect(result.text).toContain("1 + 1 * 3");
   });
 
   it("attributes expanded text to the call site, not the macro body", () => {
@@ -57,6 +64,25 @@ describe("preprocess", () => {
     const result = preprocess(source);
     const fourAt = result.text.indexOf("40");
     expect(source.slice(result.map[fourAt], result.map[fourAt] + 1)).toBe("N");
+  });
+
+  it("rescans expansion output so a macro inside a macro expands too", () => {
+    const result = preprocess(
+      "#define SIZE 4\n#define DOUBLE(x) ((x) + (x))\nint n = DOUBLE(SIZE);",
+    );
+    expect(result.text).toContain("((4) + (4))");
+    expect(result.text).not.toContain("SIZE");
+  });
+
+  it("expands a chain of object-like macros", () => {
+    const result = preprocess("#define A B\n#define B 3\nint x = A;");
+    expect(result.text.trim().endsWith("int x = 3;")).toBe(true);
+  });
+
+  it("gives up rather than looping on a self-referential macro", () => {
+    const result = preprocess("#define LOOP LOOP + 1\nint x = LOOP;");
+    expect(result.error).toBeUndefined();
+    expect(result.text).toContain("+ 1");
   });
 
   it("drops #include with a note rather than failing", () => {

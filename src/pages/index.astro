@@ -116,8 +116,10 @@ const BLURBS: Record<(typeof STAGES)[number], string> = {
               <section class="pane" aria-labelledby={`pane-heading-${stage}`}>
                 <header class="pane-head">
                   <h3 class="pane-title" id={`pane-heading-${stage}`}>
-                    <span class="pane-number">{index + 1}</span>
-                    {STAGE_TITLES[stage]}
+                    <span class="pane-number" aria-hidden="true">
+                      {index + 1}
+                    </span>
+                    <span class="pane-name">{STAGE_TITLES[stage]}</span>
                   </h3>
                   <p class="pane-blurb">{BLURBS[stage]}</p>
                 </header>

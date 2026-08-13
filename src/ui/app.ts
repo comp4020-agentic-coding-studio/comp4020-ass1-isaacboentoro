@@ -3,6 +3,7 @@ import type { Compilation, StageId } from "../compiler/types";
 import { STAGES, STAGE_TITLES } from "../compiler/types";
 import { type BuiltPanes, buildPanes } from "./panes";
 import { DEFAULT_PRESET, PRESETS } from "./presets";
+import { clampCursor } from "./reveal";
 
 /**
  * One control drives everything on this page.
@@ -121,8 +122,7 @@ export function start(): void {
   }
 
   function setCursor(next: number): void {
-    const last = Math.max(0, compilation.steps.length - 1);
-    cursor = Math.min(Math.max(next, 0), last);
+    cursor = clampCursor(compilation, next);
     dom.scrubber.value = String(cursor);
     render();
   }

@@ -2,6 +2,7 @@ import { formatAsm } from "../compiler/codegen";
 import { formatInstr } from "../compiler/ir";
 import type { AstNode, Compilation, StageId } from "../compiler/types";
 import { STAGES, childrenOf, labelOf } from "../compiler/types";
+import { producedAt } from "./reveal";
 
 /**
  * Builds the six stage views for one compilation, and nothing else. Nothing in
@@ -28,17 +29,6 @@ function el(
   if (className) node.className = className;
   if (text !== undefined) node.textContent = text;
   return node;
-}
-
-/** artefact id -> the step index that produced it. */
-function producedAt(compilation: Compilation): Map<string, number> {
-  const map = new Map<string, number>();
-  for (const step of compilation.steps) {
-    for (const id of step.produced) {
-      if (!map.has(id)) map.set(id, step.index);
-    }
-  }
-  return map;
 }
 
 export function buildPanes(
