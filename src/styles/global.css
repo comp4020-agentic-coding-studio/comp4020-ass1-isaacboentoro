@@ -1,23 +1,25 @@
 /*
- * One page, one control. The layout is deliberately all CSS and no JavaScript:
- * the cursor lives in the app module, so resizing — or rotating a phone — in the
- * middle of a drag cannot reset what you were looking at.
+ * Brutalist: black, white, one accent. Square corners, thick rules, monospace
+ * throughout, structure left exposed rather than softened.
+ *
+ * The accent is reserved. It marks two things and nothing else — the step a
+ * stage is standing on, and the source text that step is looking at — so colour
+ * always means "here", never decoration.
+ *
+ * Layout is entirely CSS and state is entirely JavaScript, which is what makes
+ * resizing mid-drag harmless.
  */
 
 :root {
-  --bg: #12141a;
-  --bg-raised: #1a1d26;
-  --bg-sunken: #0d0f14;
-  --line: #2b3040;
-  --text: #e7e9f0;
-  --text-dim: #a2a8bd;
-  --accent: #7fd4ff;
-  --accent-dim: #2d5f78;
-  --hot: #ffd479;
-  --bad: #ff8f8f;
+  --bg: #000;
+  --fg: #fff;
+  --dim: #8a8a8a;
+  --dimmer: #3a3a3a;
+  --accent: #f2ff00;
+  --bad: #ff3b3b;
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", monospace;
-  --step: 0.35rem;
-  --radius: 0.5rem;
+  --rule: 2px;
+  --rule-heavy: 5px;
 }
 
 * {
@@ -26,78 +28,127 @@
 
 body {
   background: var(--bg);
-  color: var(--text);
-  font-family: system-ui, sans-serif;
-  line-height: 1.55;
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 15px;
+  line-height: 1.5;
   margin: 0;
-  padding: 0 1rem 3rem;
-}
-
-nav {
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1rem;
-  margin: 0 auto;
-  max-width: 92rem;
-  padding: 0.75rem 0;
-}
-
-a {
-  color: var(--accent);
+  padding: 0;
 }
 
 main {
   margin: 0 auto;
-  max-width: 92rem;
+  max-width: 100rem;
 }
 
-h1 {
-  font-size: clamp(1.6rem, 4vw, 2.6rem);
-  line-height: 1.15;
-  margin: 1.5rem 0 0.5rem;
-  max-width: 40ch;
+/* ------------------------------------------------------------------ chrome */
+
+.topbar {
+  border-bottom: var(--rule-heavy) solid var(--fg);
 }
 
-h2 {
-  font-size: 1.15rem;
-  margin: 0 0 0.5rem;
+/* The only heading on the page, deliberately the size of a label. */
+.topbar-title {
+  border-bottom: var(--rule) solid var(--dimmer);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  margin: 0;
+  padding: 0.55rem 1.25rem;
+  text-transform: uppercase;
+}
+
+nav {
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.7rem;
+  gap: 0 1.25rem;
+  letter-spacing: 0.14em;
+  padding: 0.6rem 1.25rem;
+  text-transform: uppercase;
+}
+
+a {
+  color: var(--fg);
+  text-decoration-thickness: var(--rule);
+  text-underline-offset: 0.25em;
+}
+
+a:hover {
+  background: var(--accent);
+  color: var(--bg);
+  text-decoration: none;
 }
 
 .lede {
-  color: var(--text-dim);
-  font-size: 1.05rem;
-  margin: 0 0 2rem;
-  max-width: 62ch;
+  border-bottom: var(--rule-heavy) solid var(--fg);
+  color: var(--dim);
+  margin: 0;
+  padding: 1.25rem 1.25rem 1.5rem;
 }
 
-section {
-  margin: 0 0 2rem;
-}
-
-section > p {
-  color: var(--text-dim);
-  margin: 0 0 1rem;
-  max-width: 62ch;
+.lede::before {
+  background: var(--accent);
+  content: "";
+  display: block;
+  height: var(--rule);
+  margin-bottom: 1rem;
+  width: 4rem;
 }
 
 code {
-  background: var(--bg-sunken);
-  border-radius: 0.25rem;
-  font-family: var(--mono);
-  font-size: 0.9em;
-  padding: 0.05em 0.3em;
+  background: var(--dimmer);
+  color: var(--fg);
+  padding: 0 0.25em;
 }
 
-/* ---------------------------------------------------------------- the editor */
+/* ----------------------------------------------------------------- sections */
 
-.editor-label {
-  color: var(--text-dim);
-  display: block;
-  font-size: 0.8rem;
-  letter-spacing: 0.06em;
-  margin-bottom: 0.35rem;
+section {
+  border-bottom: var(--rule-heavy) solid var(--fg);
+  margin: 0;
+  padding: 0 0 2rem;
+}
+
+.section-head {
+  border-bottom: var(--rule) solid var(--fg);
+  padding: 1.25rem 1.25rem 1rem;
+}
+
+.section-index {
+  color: var(--accent);
+  font-size: 0.7rem;
+  letter-spacing: 0.2em;
+  margin: 0 0 0.35rem;
+}
+
+.section-name {
+  font-size: clamp(1.4rem, 3vw, 2.25rem);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  margin: 0;
   text-transform: uppercase;
+}
+
+.section-blurb {
+  color: var(--dim);
+  margin: 0.6rem 0 0;
+  max-width: 72ch;
+}
+
+.field-label {
+  color: var(--dim);
+  font-size: 0.68rem;
+  letter-spacing: 0.18em;
+  margin: 0 0 0.5rem;
+  text-transform: uppercase;
+}
+
+/* ------------------------------------------------------------------- editor */
+
+.editor {
+  padding: 1.25rem 1.25rem 0;
 }
 
 .editor-frame {
@@ -106,30 +157,24 @@ code {
 
 /* The mirror and the input must agree on every metric or the highlight drifts. */
 .editor-mirror,
-.editor-input {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+.editor-input,
+.echo {
+  border: var(--rule) solid var(--fg);
   font-family: var(--mono);
   font-size: 0.9rem;
   line-height: 1.6;
   margin: 0;
   overflow-wrap: break-word;
-  padding: 0.85rem;
+  padding: 0.9rem;
   tab-size: 2;
   white-space: pre-wrap;
 }
 
 .editor-mirror {
-  background: var(--bg-sunken);
-  color: var(--text);
-  min-height: 15rem;
+  background: var(--bg);
+  color: var(--fg);
+  min-height: 14rem;
   overflow: hidden;
-}
-
-.editor-mirror mark {
-  background: var(--accent-dim);
-  border-radius: 0.15rem;
-  color: #fff;
 }
 
 /* Transparent text, visible caret: the mirror underneath is what you read. */
@@ -144,272 +189,239 @@ code {
   width: 100%;
 }
 
-.editor-input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
 .editor-input::selection {
-  background: rgb(127 212 255 / 30%);
+  background: var(--dimmer);
 }
 
-.editor-help {
-  color: var(--text-dim);
-  font-size: 0.8rem;
-  margin: 0.5rem 0 0;
+mark {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.presets-block {
+  padding: 1.5rem 1.25rem 0;
 }
 
 .presets {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-top: 1rem;
+  gap: var(--rule);
 }
 
 .preset {
-  background: var(--bg-raised);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  color: var(--text);
+  background: var(--bg);
+  border: var(--rule) solid var(--fg);
+  color: var(--fg);
   cursor: pointer;
   display: block;
   font: inherit;
-  padding: 0.4rem 0.7rem;
+  padding: 0.5rem 0.75rem;
   text-align: left;
 }
 
 .preset:hover {
-  border-color: var(--accent-dim);
+  background: var(--fg);
+  color: var(--bg);
 }
 
 .preset-name {
   display: block;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .preset-about {
-  color: var(--text-dim);
+  color: var(--dim);
   display: block;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
 }
 
-/* --------------------------------------------------------------- the control */
-
-.controls {
-  background: var(--bg-raised);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 0.85rem;
+.preset:hover .preset-about {
+  color: var(--bg);
 }
 
-.controls-row {
-  align-items: center;
+/* ------------------------------------------------------- the per-stage player */
+
+.player {
+  border-bottom: var(--rule) solid var(--fg);
+  padding: 1rem 1.25rem 1.1rem;
+}
+
+.player-row {
+  align-items: stretch;
   display: flex;
-  gap: 0.75rem;
+  gap: 1rem;
 }
 
-#play {
-  background: var(--accent);
-  border: 0;
-  border-radius: var(--radius);
-  color: #07202b;
+.player-play {
+  background: var(--bg);
+  border: var(--rule) solid var(--fg);
+  color: var(--fg);
   cursor: pointer;
   font: inherit;
-  font-weight: 600;
-  min-width: 5rem;
-  padding: 0.5rem 0.9rem;
+  font-size: 0.85rem;
+  letter-spacing: 0.16em;
+  min-width: 7rem;
+  padding: 0.5rem 1rem;
 }
 
-#play[aria-pressed="true"] {
-  background: var(--hot);
+.player-play:hover {
+  background: var(--fg);
+  color: var(--bg);
 }
 
-.scrubber {
+.player-play[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
+.player-play:disabled {
+  border-color: var(--dim);
+  color: var(--dim);
+  cursor: not-allowed;
+}
+
+.player-scrubber {
   accent-color: var(--accent);
+  align-self: center;
   flex: 1;
+  height: 1.75rem;
   min-width: 0;
 }
 
-.scrubber:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 4px;
-}
-
-.position {
-  color: var(--text-dim);
-  font-size: 0.8rem;
+.player-position {
+  align-self: center;
+  color: var(--dim);
+  font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
+  letter-spacing: 0.1em;
   margin: 0;
   white-space: nowrap;
 }
 
-.ticks {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-  margin-top: 0.75rem;
-}
-
-.tick {
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--text-dim);
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.75rem;
-  padding: 0.2rem 0.6rem;
-}
-
-.tick[aria-current="step"] {
-  background: var(--accent-dim);
-  border-color: var(--accent);
-  color: #fff;
-}
-
-.tick:disabled {
-  cursor: not-allowed;
-  opacity: 0.35;
-}
-
-.commentary {
-  border-top: 1px solid var(--line);
-  margin-top: 0.75rem;
-  min-height: 4.5rem;
+.player-commentary {
+  border-top: var(--rule) solid var(--dimmer);
+  margin-top: 1rem;
+  min-height: 4.25rem;
   padding-top: 0.75rem;
 }
 
-.commentary-title {
-  font-family: var(--mono);
+.player-step {
+  color: var(--accent);
   font-size: 0.85rem;
-  margin: 0 0 0.25rem;
-}
-
-.commentary-explain {
-  color: var(--text-dim);
-  font-size: 0.9rem;
-  margin: 0;
-  max-width: 60ch;
-}
-
-/* ----------------------------------------------------------------- the panes */
-
-.panes {
-  display: grid;
-  gap: 1rem;
-  margin-top: 1rem;
-}
-
-.pane {
-  background: var(--bg-raised);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  margin: 0;
-  overflow: hidden;
-}
-
-.pane.is-active {
-  border-color: var(--accent-dim);
-}
-
-.pane-head {
-  border-bottom: 1px solid var(--line);
-  padding: 0.7rem 0.85rem;
-}
-
-.pane-title {
-  align-items: center;
-  display: flex;
-  font-size: 0.95rem;
-  gap: 0.5rem;
-  margin: 0;
-}
-
-.pane-number {
-  background: var(--bg-sunken);
-  border-radius: 999px;
-  color: var(--text-dim);
-  font-size: 0.75rem;
-  height: 1.5rem;
-  line-height: 1.5rem;
-  text-align: center;
-  width: 1.5rem;
-}
-
-.pane.is-active .pane-number {
-  background: var(--accent);
-  color: #07202b;
-}
-
-.pane-blurb {
-  color: var(--text-dim);
-  font-size: 0.8rem;
-  margin: 0.25rem 0 0;
-}
-
-.pane-scroll {
-  max-height: 22rem;
-  overflow: auto;
-  padding: 0.85rem;
-  position: relative;
-}
-
-.pane-note {
-  color: var(--text-dim);
-  font-size: 0.85rem;
-  margin: 0.75rem 0 0;
-}
-
-.pane-subhead {
-  color: var(--text-dim);
-  font-size: 0.75rem;
   letter-spacing: 0.06em;
-  margin: 1rem 0 0.35rem;
+  margin: 0 0 0.3rem;
   text-transform: uppercase;
 }
 
-/* Everything the scrubber reveals starts hidden but keeps its space. */
+.player-explain {
+  color: var(--fg);
+  margin: 0;
+  max-width: 76ch;
+}
+
+/* ------------------------------------------------------------ stage contents */
+
+.stage-grid {
+  display: grid;
+  gap: 1.25rem;
+  padding: 1.25rem;
+}
+
+.stage-column {
+  min-width: 0;
+}
+
+.echo {
+  border-color: var(--dimmer);
+  color: var(--dim);
+  max-height: 26rem;
+  overflow: auto;
+}
+
+.stage-body {
+  border: var(--rule) solid var(--fg);
+  max-height: 26rem;
+  overflow: auto;
+  padding: 0.9rem;
+}
+
+.stage-body:focus-visible,
+.player-scrubber:focus-visible,
+.editor-input:focus-visible,
+.preset:focus-visible,
+.player-play:focus-visible {
+  outline: var(--rule) solid var(--accent);
+  outline-offset: 2px;
+}
+
+.stage.is-empty .stage-body {
+  border-color: var(--dimmer);
+}
+
+.pane-note {
+  color: var(--dim);
+  font-size: 0.85rem;
+  margin: 1rem 0 0;
+}
+
+.pane-subhead {
+  color: var(--dim);
+  font-size: 0.68rem;
+  letter-spacing: 0.18em;
+  margin: 1.25rem 0 0.4rem;
+  text-transform: uppercase;
+}
+
+/*
+ * The reveal rule. `visibility: hidden` rather than a low opacity: it keeps the
+ * space reserved so nothing jumps, but it also takes the artefact out of the
+ * accessibility tree — which is correct, because a step that has not happened has
+ * produced nothing yet. Dimming instead left 53 elements of unreadable text on the
+ * page as far as axe was concerned, and it was right.
+ */
 [data-reveal] {
-  opacity: 0.12;
-  transition: opacity 120ms ease-out;
+  opacity: 0;
+  transition: opacity 90ms linear;
+  visibility: hidden;
 }
 
 [data-reveal].is-shown {
   opacity: 1;
+  visibility: visible;
 }
 
 [data-reveal].is-current {
-  outline: 2px solid var(--hot);
+  outline: var(--rule) solid var(--accent);
   outline-offset: 2px;
 }
 
 .diagnostic {
-  background: rgb(255 143 143 / 10%);
-  border: 1px solid var(--bad);
-  border-radius: var(--radius);
-  margin-bottom: 0.85rem;
-  padding: 0.6rem 0.75rem;
+  border: var(--rule) solid var(--bad);
+  margin-bottom: 1rem;
+  padding: 0.7rem 0.85rem;
 }
 
 .diagnostic-message {
   color: var(--bad);
-  font-family: var(--mono);
-  font-size: 0.85rem;
+  font-size: 0.9rem;
   margin: 0;
 }
 
 .diagnostic-where,
 .diagnostic-hint {
-  color: var(--text-dim);
+  color: var(--dim);
   font-size: 0.8rem;
-  margin: 0.25rem 0 0;
+  margin: 0.3rem 0 0;
 }
 
 /* preprocess */
 
 .edits {
   display: grid;
-  gap: 0.35rem;
+  gap: var(--rule);
   list-style: none;
   margin: 0;
   padding: 0;
@@ -417,19 +429,17 @@ code {
 
 .edit {
   align-items: baseline;
-  background: var(--bg-sunken);
-  border-radius: 0.3rem;
+  border: var(--rule) solid var(--dimmer);
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: 0.6rem;
   padding: 0.35rem 0.5rem;
 }
 
 .edit-kind {
   color: var(--accent);
-  font-family: var(--mono);
-  font-size: 0.7rem;
-  letter-spacing: 0.05em;
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
@@ -437,20 +447,11 @@ code {
   font-size: 0.85rem;
 }
 
-/* No overflow of its own: the pane around it scrolls in both directions, so a
-   keyboard only needs one focus stop per pane rather than one per listing. */
 .listing {
-  background: var(--bg-sunken);
-  border-radius: 0.3rem;
-  font-family: var(--mono);
-  font-size: 0.8rem;
+  border: var(--rule) solid var(--dimmer);
+  font-size: 0.82rem;
   margin: 0;
-  padding: 0.6rem 0.75rem;
-}
-
-.pane-scroll:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+  padding: 0.6rem 0.7rem;
 }
 
 .listing-text code {
@@ -464,36 +465,28 @@ code {
 .tokens {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.3rem;
+  gap: var(--rule);
 }
 
 .token {
-  background: var(--bg-sunken);
-  border: 1px solid var(--line);
-  border-radius: 0.3rem;
+  border: var(--rule) solid var(--fg);
   display: grid;
-  padding: 0.2rem 0.45rem;
+  padding: 0.2rem 0.4rem;
 }
 
 .token-text {
-  font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: 0.82rem;
 }
 
 .token-kind {
-  color: var(--text-dim);
-  font-size: 0.6rem;
-  letter-spacing: 0.05em;
+  color: var(--dim);
+  font-size: 0.58rem;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
-.token-keyword .token-text {
-  color: var(--accent);
-}
-
-.token-number .token-text,
-.token-char .token-text {
-  color: var(--hot);
+.token-punct {
+  border-color: var(--dimmer);
 }
 
 /* parse */
@@ -506,9 +499,9 @@ code {
 }
 
 .tree-children {
-  border-left: 1px solid var(--line);
-  margin-left: 0.6rem;
-  padding-left: 0.7rem;
+  border-left: var(--rule) solid var(--dimmer);
+  margin-left: 0.5rem;
+  padding-left: 0.75rem;
 }
 
 .tree-node {
@@ -517,47 +510,41 @@ code {
 
 .tree-label {
   align-items: baseline;
-  background: var(--bg-sunken);
-  border-radius: 0.3rem;
+  border: var(--rule) solid var(--fg);
   display: inline-flex;
-  font-family: var(--mono);
-  font-size: 0.8rem;
-  gap: 0.4rem;
-  padding: 0.1rem 0.4rem;
+  font-size: 0.82rem;
+  gap: 0.45rem;
+  padding: 0.05rem 0.35rem;
 }
 
 .tree-kind {
-  color: var(--text-dim);
-  font-family: system-ui, sans-serif;
-  font-size: 0.65rem;
+  color: var(--dim);
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 /* semantics */
 
 .symbols {
   border-collapse: collapse;
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   width: 100%;
 }
 
 .symbols th {
-  border-bottom: 1px solid var(--line);
-  color: var(--text-dim);
-  font-size: 0.7rem;
-  letter-spacing: 0.05em;
+  border-bottom: var(--rule) solid var(--fg);
+  color: var(--dim);
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
   padding: 0.3rem 0.4rem;
   text-align: left;
   text-transform: uppercase;
 }
 
 .symbols td {
-  border-bottom: 1px solid var(--line);
+  border-bottom: var(--rule) solid var(--dimmer);
   padding: 0.3rem 0.4rem;
-}
-
-.symbol-name,
-.symbol-slot {
-  font-family: var(--mono);
 }
 
 /* ir and codegen */
@@ -576,50 +563,61 @@ code {
 
 .ir-label,
 .asm-label {
-  color: var(--hot);
+  color: var(--accent);
 }
 
 .asm-directive {
-  color: var(--text-dim);
+  color: var(--dim);
 }
 
 .asm-comment {
-  color: var(--text-dim);
+  color: var(--dim);
   padding-left: 1.5rem;
 }
 
+.limits {
+  margin: 0;
+  max-width: 84ch;
+  padding: 1.25rem 1.25rem 0 2.75rem;
+}
+
+.limits li {
+  border-bottom: var(--rule) solid var(--dimmer);
+  padding: 0.5rem 0;
+}
+
 noscript p {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  color: var(--text-dim);
-  margin: 0 auto;
-  max-width: 62ch;
+  border: var(--rule) solid var(--fg);
+  color: var(--dim);
+  margin: 1.25rem;
+  max-width: 72ch;
   padding: 1rem;
 }
 
-/* ---------------------------------------------------------------- viewports */
+/* --------------------------------------------------------------- viewports */
 
-/* Phone: one pane at a time. The scrubber already chooses the stage, so nothing
-   extra is needed to switch between them. */
-@media (width <= 60rem) {
-  .pane {
-    display: none;
+/* Narrow: the slider gets its own line and enough height to drag with a thumb. */
+@media (width <= 34rem) {
+  .player-row {
+    display: grid;
+    gap: 0.6rem 1rem;
+    grid-template-columns: auto 1fr;
   }
 
-  .pane.is-active {
-    display: block;
+  .player-play {
+    grid-area: 1 / 1;
   }
 
-  .pane-scroll {
-    max-height: 55vh;
+  .player-position {
+    grid-area: 1 / 2;
+    text-align: right;
   }
 
-  .editor-mirror {
-    min-height: 11rem;
+  .player-scrubber {
+    grid-area: 2 / 1 / 3 / -1;
+    height: 2.25rem;
   }
 
-  /* Seven stacked cards pushed the scrubber a screen and a half down the page.
-     On a phone the examples become one swipeable row of names. */
   .presets {
     flex-wrap: nowrap;
     overflow-x: auto;
@@ -635,65 +633,15 @@ noscript p {
   }
 }
 
-/* Narrow phones: the slider gets its own line, and enough height to drag. */
-@media (width <= 30rem) {
-  .controls-row {
-    display: grid;
-    gap: 0.5rem 0.75rem;
-    grid-template-columns: auto 1fr;
+/* Wide: each stage puts what it reads beside what it produced. */
+@media (width >= 62rem) {
+  .stage-grid {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
   }
 
-  #play {
-    grid-area: 1 / 1;
-  }
-
-  .position {
-    grid-area: 1 / 2;
-    text-align: right;
-  }
-
-  .scrubber {
-    grid-area: 2 / 1 / 3 / -1;
-    height: 2.25rem;
-  }
-}
-
-@media (width >= 60rem) {
-  main {
-    align-items: start;
-    display: grid;
-    gap: 0 2.5rem;
-    grid-template-columns: minmax(22rem, 34fr) 66fr;
-  }
-
-  h1,
-  .lede,
-  #limits {
-    grid-column: 1 / -1;
-  }
-
-  /* `align-self: start` is what makes sticky work inside a grid: the row is as
-     tall as the pipeline beside it, so the editor has somewhere to travel. */
-  #code {
-    align-self: start;
-    grid-area: 3 / 1;
-    position: sticky;
-    top: 1.5rem;
-  }
-
-  #pipeline {
-    grid-area: 3 / 2;
-  }
-
-  .controls {
-    position: sticky;
-    top: 1.5rem;
-    z-index: 1;
-  }
-
-  .panes {
-    align-items: start;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .echo,
+  .stage-body {
+    max-height: 34rem;
   }
 }
 

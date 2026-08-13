@@ -179,6 +179,7 @@ class Parser {
       span: spanOver(typeToken.span, body.span),
       returnType,
       name: nameToken.text,
+      nameSpan: nameToken.span,
       params,
       body,
     };

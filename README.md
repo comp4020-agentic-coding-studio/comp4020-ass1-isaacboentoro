@@ -1,8 +1,10 @@
 # Six rewrites: what compiling C actually does
 
-An interactive explainer. Type C into the page and one slider walks the whole
-compilation, step by step, through six stages: preprocessing, scanning, parsing,
-semantic analysis, lowering to three-address IR, and x86-64 assembly.
+An interactive explainer. Type C into the page, then play any of the six stages —
+preprocessing, scanning, parsing, semantic analysis, lowering to three-address IR,
+and x86-64 assembly — and watch it do its work one step at a time. Each stage is
+its own section with its own player, showing the source it is reading beside what
+it produced.
 
 The compiler is written from scratch in TypeScript and runs in the browser. There
 is no server, no wasm toolchain, and no network call — the whole thing is 18.7kB
@@ -20,8 +22,8 @@ reflection.
 - `src/compiler/` — the compiler. One module per stage, all pure functions, no DOM.
   Every stage returns its artefacts **and** a `Step[]` describing what it did; that
   step trace is what the page scrubs through.
-- `src/ui/` — the page. `state`/`app` own the cursor, `panes` builds the six views,
-  `reveal` holds the one visibility rule.
+- `src/ui/` — the page. `app` owns the six per-stage players, `panes` builds the
+  six views, `reveal` holds the one visibility rule and the local step numbering.
 - `src/pages/index.astro`, `src/styles/global.css` — the shell and the layout.
 - `spec/` — `invariants.test.ts` (shipped, untouched), `compiler.test.ts` (stage
   contracts), `interaction.test.ts` (the core interaction, as a property and driven

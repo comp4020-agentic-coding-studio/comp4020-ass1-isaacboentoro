@@ -2,14 +2,15 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { JSDOM } from "jsdom";
 import { describe, expect, it } from "vitest";
+import { STAGES, STAGE_TITLES } from "../src/compiler/types";
 
 /**
  * What has to be true of the SHIPPED page, over and above the invariants.
  *
  * These are the assignment spec's checkable lines turned into assertions: the
- * page is static and client-side, the core interaction's controls are really in
- * the HTML, and the caveats about what this compiler is not are on the page
- * rather than only in the source comments.
+ * page is static and client-side, every stage's controls are really in the HTML,
+ * and the caveats about what this compiler is not are on the page rather than
+ * only in source comments.
  */
 
 const html = readFileSync(resolve("dist/index.html"), "utf8");
@@ -29,8 +30,9 @@ describe("the shipped page", () => {
   });
 
   it("asks for no favicon it does not ship", () => {
-    const icon = document.querySelector('link[rel="icon"]')?.getAttribute("href");
-    expect(icon).toBe("favicon.svg");
+    expect(document.querySelector('link[rel="icon"]')?.getAttribute("href")).toBe(
+      "favicon.svg",
+    );
   });
 
   it("references assets relatively, so a project sub-path still resolves", () => {
@@ -48,66 +50,91 @@ describe("the shipped page", () => {
   });
 });
 
-describe("the controls are really in the markup", () => {
-  it("has a range input as the one control", () => {
-    const scrubber = document.querySelector<HTMLInputElement>("#scrubber");
-    expect(scrubber?.getAttribute("type")).toBe("range");
-    // A native range is what gives arrows, Home and End for free.
-    expect(scrubber?.getAttribute("aria-label")?.length ?? 0).toBeGreaterThan(3);
+describe("one section per stage", () => {
+  it("gives each stage a section of its own, in pipeline order", () => {
+    const sections = [...document.querySelectorAll(".stage")].map((node) => node.id);
+    expect(sections).toEqual(STAGES.map((stage) => `stage-${stage}`));
   });
 
-  it("has a real button for playback, with a pressed state", () => {
-    const play = document.querySelector("#play");
-    expect(play?.tagName).toBe("BUTTON");
-    expect(play?.getAttribute("aria-pressed")).toBe("false");
+  it("titles each section with a heading", () => {
+    const names = [...document.querySelectorAll(".stage .section-name")].map(
+      (node) => node.textContent?.trim(),
+    );
+    expect(names).toEqual(STAGES.map((stage) => STAGE_TITLES[stage]));
   });
 
-  it("announces each step in a polite live region", () => {
-    const live = document.querySelector('[aria-live="polite"]');
-    expect(live).toBeTruthy();
-    expect(live?.querySelector("#step-title")).toBeTruthy();
-    expect(live?.querySelector("#step-explain")).toBeTruthy();
+  it("numbers the stages for a sighted reader and hides it from the rest", () => {
+    const indexes = document.querySelectorAll(".stage .section-index");
+    expect(indexes).toHaveLength(STAGES.length);
+    for (const node of indexes) {
+      expect(node.getAttribute("aria-hidden")).toBe("true");
+      expect(node.textContent).toMatch(/STAGE \d+ \/ 6/);
+    }
   });
 
-  it("gives the position in words as well as a slider handle", () => {
-    expect(document.querySelector("#position")?.textContent).toMatch(/step \d+ of \d+/);
+  it("has no single global player left over", () => {
+    expect(document.querySelector("#scrubber")).toBeNull();
+    expect(document.querySelector("#play")).toBeNull();
   });
+});
 
-  it("labels the editor and hides the highlight mirror from screen readers", () => {
-    const label = document.querySelector('label[for="source"]');
-    expect(label?.textContent?.trim()).toBeTruthy();
+describe("every stage's controls are really in the markup", () => {
+  for (const stage of STAGES) {
+    describe(stage, () => {
+      const section = document.getElementById(`stage-${stage}`);
+
+      it("has its own range input, labelled with the stage", () => {
+        const scrubber = section?.querySelector(`#scrub-${stage}`);
+        expect(scrubber?.getAttribute("type")).toBe("range");
+        // A native range is what gives arrows, Home and End for free.
+        expect(scrubber?.getAttribute("aria-label")).toContain(STAGE_TITLES[stage]);
+      });
+
+      it("has its own real toggle button", () => {
+        const play = section?.querySelector(`#play-${stage}`);
+        expect(play?.tagName).toBe("BUTTON");
+        expect(play?.getAttribute("aria-pressed")).toBe("false");
+      });
+
+      it("announces its own steps in its own live region", () => {
+        const live = section?.querySelector('[aria-live="polite"]');
+        expect(live?.querySelector(`#title-${stage}`)).toBeTruthy();
+        expect(live?.querySelector(`#explain-${stage}`)).toBeTruthy();
+      });
+
+      it("states its position in words as well as a slider handle", () => {
+        expect(section?.querySelector(`#pos-${stage}`)?.textContent).toMatch(
+          /STEP \d+ \/ \d+/,
+        );
+      });
+
+      it("shows what it reads beside what it produces", () => {
+        const echo = section?.querySelector(`#echo-${stage}`);
+        const body = section?.querySelector(`#pane-${stage}`);
+        expect(echo).toBeTruthy();
+        expect(body).toBeTruthy();
+        // The editor is the accessible copy; six more would be six repetitions.
+        expect(echo?.getAttribute("aria-hidden")).toBe("true");
+        // The output scrolls, so a keyboard has to be able to reach it.
+        expect(body?.getAttribute("tabindex")).toBe("0");
+      });
+    });
+  }
+});
+
+describe("the editor", () => {
+  it("is labelled, with the highlight mirror hidden from screen readers", () => {
+    expect(document.querySelector('label[for="source"]')?.textContent?.trim())
+      .toBeTruthy();
     expect(document.querySelector("#mirror")?.getAttribute("aria-hidden")).toBe(
       "true",
     );
   });
 
-  it("has a container for every stage of the pipeline", () => {
-    for (const stage of ["preprocess", "scan", "parse", "semantics", "ir", "codegen"]) {
-      expect(document.querySelector(`#pane-${stage}`), stage).toBeTruthy();
-    }
-    expect(document.querySelectorAll(".pane")).toHaveLength(6);
-  });
-
-  it("titles every pane with a heading, in order", () => {
-    const titles = [...document.querySelectorAll(".pane-name")].map((node) =>
-      node.textContent?.trim(),
-    );
-    expect(titles).toEqual([
-      "Preprocess",
-      "Scan",
-      "Parse",
-      "Analyse",
-      "Lower to IR",
-      "Emit assembly",
-    ]);
-  });
-
-  it("hides the decorative step number from screen readers", () => {
-    // Without this the heading reads as "1Preprocess"; the DOM order already
-    // carries the sequence.
-    for (const number of document.querySelectorAll(".pane-number")) {
-      expect(number.getAttribute("aria-hidden")).toBe("true");
-    }
+  it("has a labelled group for the examples", () => {
+    const presets = document.querySelector("#presets");
+    expect(presets?.getAttribute("role")).toBe("group");
+    expect(presets?.getAttribute("aria-labelledby")).toBeTruthy();
   });
 });
 

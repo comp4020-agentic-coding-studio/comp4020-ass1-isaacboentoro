@@ -145,6 +145,8 @@ export type FunctionDecl = NodeBase & {
   kind: "Function";
   returnType: CType;
   name: string;
+  /** Just the name, so later stages can highlight it rather than the whole body. */
+  nameSpan: Span;
   params: Param[];
   body: Stmt & { kind: "Block" };
 };

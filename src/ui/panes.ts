@@ -2,7 +2,7 @@ import { formatAsm } from "../compiler/codegen";
 import { formatInstr } from "../compiler/ir";
 import type { AstNode, Compilation, StageId } from "../compiler/types";
 import { STAGES, childrenOf, labelOf } from "../compiler/types";
-import { producedAt } from "./reveal";
+import { type StageTrace, tracesOf } from "./reveal";
 
 /**
  * Builds the six stage views for one compilation, and nothing else. Nothing in
@@ -14,8 +14,10 @@ import { producedAt } from "./reveal";
 export type Reveal = { el: HTMLElement; step: number };
 
 export type BuiltPanes = {
-  reveals: Reveal[];
-  /** Elements that hold the current-step marker, per stage. */
+  /** Reveal lists are per stage, because each stage has its own player. */
+  reveals: Record<StageId, Reveal[]>;
+  traces: Record<StageId, StageTrace>;
+  /** The element that holds the current-step marker, per stage. */
   bodies: Record<StageId, HTMLElement>;
 };
 
@@ -35,21 +37,25 @@ export function buildPanes(
   compilation: Compilation,
   panes: Record<StageId, HTMLElement>,
 ): BuiltPanes {
-  const at = producedAt(compilation);
-  const reveals: Reveal[] = [];
+  const traces = tracesOf(compilation);
+  const reveals = {} as Record<StageId, Reveal[]>;
   const bodies = {} as Record<StageId, HTMLElement>;
 
-  /** Stamp an element with the step that brings it into existence. */
-  const reveal = (node: HTMLElement, id: string): HTMLElement => {
-    const step = at.get(id);
-    if (step !== undefined) {
-      node.dataset.reveal = String(step);
-      reveals.push({ el: node, step });
-    }
-    return node;
-  };
-
   for (const stage of STAGES) {
+    const stageReveals: Reveal[] = [];
+    reveals[stage] = stageReveals;
+    const at = traces[stage].producedAt;
+
+    /** Stamp an element with the local step that brings it into existence. */
+    const reveal = (node: HTMLElement, id: string): HTMLElement => {
+      const step = at.get(id);
+      if (step !== undefined) {
+        node.dataset.reveal = String(step);
+        stageReveals.push({ el: node, step });
+      }
+      return node;
+    };
+
     const pane = panes[stage];
     pane.replaceChildren();
     const body = el("div", "pane-body");
@@ -96,7 +102,7 @@ export function buildPanes(
     }
   }
 
-  return { reveals, bodies };
+  return { reveals, traces, bodies };
 }
 
 function stageName(stage: StageId | string): string {

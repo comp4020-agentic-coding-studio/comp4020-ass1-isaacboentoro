@@ -1,37 +1,52 @@
-import type { Compilation } from "../compiler/types";
+import type { Compilation, StageId, Step } from "../compiler/types";
+import { STAGES } from "../compiler/types";
 
 /**
  * The visibility rule, in one place and with no DOM in sight.
  *
- * "An artefact is visible once the step that produced it has happened" is the
- * whole contract of the page, so it is worth being able to state it as a pure
- * function and test it without a browser.
+ * Each stage is its own player, so step numbers are LOCAL to a stage: the
+ * scanner's step 3 is the third thing the scanner did, not the third thing the
+ * compiler did. The global order still exists in `Step.index`, but nothing in the
+ * page needs it any more.
  */
 
-/** artefact id -> the index of the step that first produced it. */
-export function producedAt(compilation: Compilation): Map<string, number> {
-  const map = new Map<string, number>();
-  for (const step of compilation.steps) {
+export type StageTrace = {
+  stage: StageId;
+  steps: Step[];
+  /** artefact id -> the local step index that produced it. */
+  producedAt: Map<string, number>;
+};
+
+export function traceOf(compilation: Compilation, stage: StageId): StageTrace {
+  const steps = compilation.steps.filter((step) => step.stage === stage);
+  const producedAt = new Map<string, number>();
+  steps.forEach((step, local) => {
     for (const id of step.produced) {
-      if (!map.has(id)) map.set(id, step.index);
+      if (!producedAt.has(id)) producedAt.set(id, local);
     }
-  }
-  return map;
+  });
+  return { stage, steps, producedAt };
 }
 
-/** Every artefact visible when standing on `cursor`. */
-export function visibleAt(compilation: Compilation, cursor: number): string[] {
-  const at = producedAt(compilation);
+export function tracesOf(compilation: Compilation): Record<StageId, StageTrace> {
+  const traces = {} as Record<StageId, StageTrace>;
+  for (const stage of STAGES) traces[stage] = traceOf(compilation, stage);
+  return traces;
+}
+
+/** Every artefact visible when this stage's player is standing on `cursor`. */
+export function visibleIn(trace: StageTrace, cursor: number): string[] {
+  const at = clamp(cursor, trace.steps.length);
   const visible: string[] = [];
-  for (const [id, step] of at) {
-    if (step <= clampCursor(compilation, cursor)) visible.push(id);
+  for (const [id, step] of trace.producedAt) {
+    if (step <= at) visible.push(id);
   }
   return visible;
 }
 
-/** The cursor can only ever name a step that exists. */
-export function clampCursor(compilation: Compilation, cursor: number): number {
-  const last = Math.max(0, compilation.steps.length - 1);
+/** A cursor can only ever name a step that exists. */
+export function clamp(cursor: number, length: number): number {
+  const last = Math.max(0, length - 1);
   if (Number.isNaN(cursor)) return 0;
   return Math.min(Math.max(Math.trunc(cursor), 0), last);
 }

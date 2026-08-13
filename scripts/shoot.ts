@@ -2,10 +2,10 @@
  * Look at the page instead of assuming.
  *
  * Serves `dist/` and drives a real Chromium over it at both marking viewports:
- * 1920x1080 and 390x844. It fails loudly on any console error or page error,
- * exercises the one interaction that matters (move the scrubber, watch the panes
- * change), and writes a screenshot per viewport so the rendered result can be
- * checked by eye rather than by hope.
+ * 1920x1080 and 390x844. It fails loudly on console errors, on a stage player
+ * that does not change what its stage shows, on one stage leaking into another,
+ * on a keyboard that cannot drive it, on a resize that loses the cursors, on
+ * horizontal overflow, on any serious axe violation, and on a bundle over budget.
  *
  *   pnpm shoot                     # against a local server over dist/
  *   pnpm shoot https://…/repo/     # against the deployed URL, sub-path and all
@@ -14,17 +14,23 @@
  * under a project sub-path, and only the live URL proves otherwise.
  */
 
-import { createServer } from "node:http";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { gzipSync } from "node:zlib";
-import { extname, join, normalize, resolve } from "node:path";
+import { createServer } from "node:http";
 import { createRequire } from "node:module";
+import { extname, join, normalize, resolve } from "node:path";
+import { gzipSync } from "node:zlib";
 import puppeteer from "puppeteer-core";
 
 const DIST = resolve("dist");
 const OUT = resolve(".screens");
 const CHROME = ["/usr/bin/chromium", "/usr/bin/google-chrome", "/usr/bin/chrome"];
+
+/** Must match STAGES in src/compiler/types.ts. */
+const STAGES = ["preprocess", "scan", "parse", "semantics", "ir", "codegen"];
+
+/** The whole compiler ships to the visitor, so its weight is a real constraint. */
+const GZIP_BUDGET_BYTES = 60_000;
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -39,6 +45,10 @@ const VIEWPORTS = [
   { name: "desktop", width: 1920, height: 1080 },
   { name: "phone", width: 390, height: 844 },
 ];
+
+type Page = Awaited<
+  ReturnType<Awaited<ReturnType<typeof puppeteer.launch>>["newPage"]>
+>;
 
 function serve(): Promise<{ url: string; close: () => void }> {
   const server = createServer(async (request, response) => {
@@ -59,10 +69,7 @@ function serve(): Promise<{ url: string; close: () => void }> {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address();
       const port = typeof address === "object" && address ? address.port : 0;
-      done({
-        url: `http://127.0.0.1:${port}/`,
-        close: () => server.close(),
-      });
+      done({ url: `http://127.0.0.1:${port}/`, close: () => server.close() });
     });
   });
 }
@@ -77,58 +84,88 @@ function findChrome(): string {
   return found;
 }
 
-type Page = Awaited<ReturnType<Awaited<ReturnType<typeof puppeteer.launch>>["newPage"]>>;
-
-async function readCursor(page: Page): Promise<number> {
-  return page.$eval("#scrubber", (el) => Number((el as HTMLInputElement).value));
-}
-
-type Violation = { id: string; impact: string; help: string; nodes: number };
-
-/**
- * Nothing in the course CI measures accessibility, so this is the sensor for it.
- * Only serious and critical violations fail the run — the lower tiers are worth
- * reading but not worth blocking a build over.
- */
-async function axeScan(page: Page): Promise<Violation[]> {
-  const axePath = createRequire(import.meta.url).resolve("axe-core");
-  await page.addScriptTag({ path: axePath });
-  return page.evaluate(async () => {
-    const axe = (globalThis as unknown as { axe: { run: (o: unknown) => Promise<{ violations: { id: string; impact: string | null; help: string; nodes: unknown[] }[] }> } }).axe;
-    const results = await axe.run({
-      runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] },
-    });
-    return results.violations
-      .filter((violation) => violation.impact === "serious" || violation.impact === "critical")
-      .map((violation) => ({
-        id: violation.id,
-        impact: violation.impact ?? "unknown",
-        help: violation.help,
-        nodes: violation.nodes.length,
-      }));
-  });
-}
-
-/**
- * The compiler runs in the visitor's browser, so the whole thing has to arrive
- * over their connection. A budget keeps that honest: the moment this creeps up,
- * the "works on a slow connection" claim needs re-earning.
- */
-const GZIP_BUDGET_BYTES = 60_000;
-
 async function bundleWeight(): Promise<{ total: number; detail: string }> {
   const assets = join(DIST, "_astro");
   const files = existsSync(assets) ? await readdir(assets) : [];
   let total = 0;
   const parts: string[] = [];
   for (const name of files) {
-    const bytes = await readFile(join(assets, name));
-    const gzipped = gzipSync(bytes).length;
+    const gzipped = gzipSync(await readFile(join(assets, name))).length;
     total += gzipped;
     parts.push(`${extname(name).slice(1)} ${Math.round(gzipped / 100) / 10}kB`);
   }
   return { total, detail: parts.join(", ") };
 }
+
+type Violation = { id: string; impact: string; help: string; nodes: number };
+
+/**
+ * Nothing in the course CI measures accessibility, so this is the sensor for it.
+ * Only serious and critical violations fail the run.
+ */
+async function axeScan(page: Page): Promise<Violation[]> {
+  await page.addScriptTag({
+    path: createRequire(import.meta.url).resolve("axe-core"),
+  });
+  return page.evaluate(async () => {
+    const axe = (
+      globalThis as unknown as {
+        axe: {
+          run: (options: unknown) => Promise<{
+            violations: {
+              id: string;
+              impact: string | null;
+              help: string;
+              nodes: unknown[];
+            }[];
+          }>;
+        };
+      }
+    ).axe;
+    const results = await axe.run({
+      runOnly: {
+        type: "tag",
+        values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"],
+      },
+    });
+    return results.violations
+      .filter((v) => v.impact === "serious" || v.impact === "critical")
+      .map((v) => ({
+        id: v.id,
+        impact: v.impact ?? "unknown",
+        help: v.help,
+        nodes: v.nodes.length,
+      }));
+  });
+}
+
+/** How many of a stage's artefacts are currently revealed. */
+function shownIn(page: Page, stage: string): Promise<number> {
+  return page.$$eval(
+    `#pane-${stage} [data-reveal].is-shown`,
+    (nodes) => nodes.length,
+  );
+}
+
+function cursorOf(page: Page, stage: string): Promise<number> {
+  return page.$eval(`#scrub-${stage}`, (el) =>
+    Number((el as HTMLInputElement).value),
+  );
+}
+
+async function scrubTo(page: Page, stage: string, value: number): Promise<void> {
+  await page.$eval(
+    `#scrub-${stage}`,
+    (el, next) => {
+      const input = el as HTMLInputElement;
+      input.value = String(next);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    },
+    value,
+  );
+}
+
+const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
 async function main(): Promise<void> {
   if (!existsSync(join(DIST, "index.html"))) {
@@ -138,18 +175,14 @@ async function main(): Promise<void> {
 
   // A URL argument checks the deployed site instead of a local copy of dist/.
   const target = process.argv[2];
-  const site = target
-    ? { url: target, close: () => {} }
-    : await serve();
+  const site = target ? { url: target, close: () => {} } : await serve();
   const browser = await puppeteer.launch({
     executablePath: findChrome(),
     args: ["--no-sandbox", "--font-render-hinting=none"],
   });
 
   const problems: string[] = [];
-  const report: string[] = [];
-
-  report.push(`target: ${site.url}`);
+  const report: string[] = [`target: ${site.url}`];
 
   const weight = await bundleWeight();
   report.push(
@@ -163,140 +196,150 @@ async function main(): Promise<void> {
 
   for (const viewport of VIEWPORTS) {
     const page = await browser.newPage();
+    const note = (message: string) => problems.push(`[${viewport.name}] ${message}`);
     await page.setViewport({ width: viewport.width, height: viewport.height });
 
     page.on("console", (message) => {
-      if (message.type() === "error") {
-        problems.push(`[${viewport.name}] console: ${message.text()}`);
-      }
+      if (message.type() === "error") note(`console: ${message.text()}`);
     });
-    page.on("pageerror", (error) => {
-      problems.push(`[${viewport.name}] pageerror: ${error.message}`);
-    });
+    page.on("pageerror", (error) => note(`pageerror: ${error.message}`));
 
     await page.goto(site.url, { waitUntil: "networkidle0" });
 
-    // The core interaction: the scrubber changes what is visible.
-    const atEnd = await page.$eval("#scrubber", (el) => {
-      const input = el as HTMLInputElement;
-      return { value: Number(input.value), max: Number(input.max) };
-    });
-    const shownAtEnd = await page.$$eval("[data-reveal].is-shown", (n) => n.length);
+    // Every stage is a section of its own, and every section is on screen.
+    const sections = await page.$$eval(".stage", (nodes) =>
+      nodes
+        .filter((node) => (node as HTMLElement).offsetParent !== null)
+        .map((node) => node.id),
+    );
+    if (sections.length !== STAGES.length) {
+      note(`${sections.length} stage sections visible, expected ${STAGES.length}`);
+    }
 
-    await page.$eval("#scrubber", (el) => {
-      const input = el as HTMLInputElement;
-      input.value = "0";
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    const shownAtStart = await page.$$eval("[data-reveal].is-shown", (n) => n.length);
-    const firstTitle = await page.$eval("#step-title", (el) => el.textContent ?? "");
-
-    if (atEnd.max < 10) problems.push(`[${viewport.name}] only ${atEnd.max + 1} steps`);
-    if (shownAtStart >= shownAtEnd) {
-      problems.push(
-        `[${viewport.name}] scrubbing changed nothing: ${shownAtStart} shown at step 1, ${shownAtEnd} at the end`,
+    // The core interaction, per stage: its player changes what IT shows.
+    const counts: Record<string, { start: number; end: number }> = {};
+    for (const stage of STAGES) {
+      const end = await shownIn(page, stage);
+      await scrubTo(page, stage, 0);
+      const start = await shownIn(page, stage);
+      counts[stage] = { start, end };
+      if (end > 0 && start >= end) {
+        note(
+          `${stage}: playing it changed nothing (${start} at step 1, ${end} at the end)`,
+        );
+      }
+      const max = await page.$eval(`#scrub-${stage}`, (el) =>
+        Number((el as HTMLInputElement).max),
       );
+      // The program the page opens with should give every stage something to
+      // play — a dead player is a bad first impression even when it is honest.
+      if (max < 2) note(`${stage}: only ${max + 1} step(s) to play`);
+
+      // Somewhere in a stage's run it must point at source text. Not at every
+      // step: a step about the whole file (a prologue, a frame layout) drops the
+      // highlight on purpose rather than painting every line.
+      let everMarked = false;
+      for (let cursor = 0; cursor <= max; cursor += 1) {
+        await scrubTo(page, stage, cursor);
+        const marked = await page.$$eval(`#echo-${stage} mark`, (n) => n.length);
+        if (marked > 0) everMarked = true;
+      }
+      if (!everMarked) note(`${stage}: never highlights source in its own echo`);
+      await scrubTo(page, stage, 0);
     }
 
-    // Halfway, where a screenshot actually shows the mechanic working.
-    await page.$eval("#scrubber", (el) => {
-      const input = el as HTMLInputElement;
-      input.value = String(Math.floor(Number(input.max) / 2));
-      input.dispatchEvent(new Event("input", { bubbles: true }));
+    // Independence: moving one stage must not move any other.
+    for (const stage of STAGES) await scrubTo(page, stage, 1);
+    const before = await Promise.all(STAGES.map((stage) => shownIn(page, stage)));
+    await scrubTo(page, "parse", 0);
+    const after = await Promise.all(STAGES.map((stage) => shownIn(page, stage)));
+    STAGES.forEach((stage, index) => {
+      if (stage === "parse") return;
+      if (before[index] !== after[index]) {
+        note(
+          `scrubbing parse changed ${stage} (${before[index]} -> ${after[index]})`,
+        );
+      }
     });
-    const midTitle = await page.$eval("#step-title", (el) => el.textContent ?? "");
-    const marked = await page.$$eval(".editor-mirror mark", (n) => n.length);
-    if (marked === 0) {
-      problems.push(`[${viewport.name}] no source highlight at the halfway step`);
-    }
 
-    // The keyboard is a first-class way in, not an afterthought: a native range
-    // gives arrows and Home/End, and this is the check that it stayed native.
-    await page.focus("#scrubber");
-    const before = await readCursor(page);
+    // The keyboard is a first-class way in: a native range gives arrows and Home.
+    await page.focus("#scrub-scan");
+    const from = await cursorOf(page, "scan");
     await page.keyboard.press("ArrowRight");
-    const afterRight = await readCursor(page);
+    const right = await cursorOf(page, "scan");
     await page.keyboard.press("Home");
-    const afterHome = await readCursor(page);
-    if (afterRight !== before + 1) {
-      problems.push(
-        `[${viewport.name}] ArrowRight moved the cursor ${before} -> ${afterRight}`,
-      );
-    }
-    if (afterHome !== 0) {
-      problems.push(`[${viewport.name}] Home did not go to the first step`);
-    }
+    const home = await cursorOf(page, "scan");
+    if (right !== from + 1) note(`ArrowRight moved scan ${from} -> ${right}`);
+    if (home !== 0) note("Home did not return scan to its first step");
 
-    // The marker resizes mid-interaction. The cursor must survive it, because
-    // the layout is CSS and the state is not.
-    await page.$eval("#scrubber", (el) => {
-      const input = el as HTMLInputElement;
-      input.value = "17";
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    // The marker resizes mid-interaction. Every cursor must survive it. Targets
+    // are picked inside each stage's own range — a clamped cursor is correct
+    // behaviour, and asserting past the end tests the sensor, not the page.
+    const targets: Record<string, number> = {};
+    for (const stage of ["ir", "codegen"]) {
+      const max = await page.$eval(`#scrub-${stage}`, (el) =>
+        Number((el as HTMLInputElement).max),
+      );
+      targets[stage] = Math.min(3, max);
+      await scrubTo(page, stage, targets[stage]);
+    }
     await page.setViewport({ width: 700, height: 900 });
     await page.setViewport({ width: viewport.width, height: viewport.height });
-    const afterResize = await readCursor(page);
-    if (afterResize !== 17) {
-      problems.push(
-        `[${viewport.name}] resizing reset the cursor from 17 to ${afterResize}`,
-      );
+    for (const stage of ["ir", "codegen"]) {
+      const after = await cursorOf(page, stage);
+      if (after !== targets[stage]) {
+        note(`resizing lost ${stage}: ${after}, want ${targets[stage]}`);
+      }
     }
 
-    // Exactly one pane visible on a phone, all six on a desktop.
-    const visiblePanes = await page.$$eval(".pane", (panes) =>
-      panes.filter((pane) => (pane as HTMLElement).offsetParent !== null).length,
+    // Wide rules and monospace are easy to overflow. Nothing may scroll sideways.
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - window.innerWidth,
     );
-    const expectedPanes = viewport.width < 960 ? 1 : 6;
-    if (visiblePanes !== expectedPanes) {
-      problems.push(
-        `[${viewport.name}] ${visiblePanes} panes visible, expected ${expectedPanes}`,
-      );
-    }
+    if (overflow > 1) note(`${overflow}px of horizontal overflow`);
 
     // A program that does not compile has to explain itself, not go blank.
     await page.$$eval("#presets .preset", (buttons) => {
       const broken = buttons.find((b) => b.textContent?.includes("A mistake"));
       (broken as HTMLButtonElement | undefined)?.click();
     });
-    await new Promise((done) => setTimeout(done, 250));
+    await wait(300);
     const diagnostics = await page.$$eval(".diagnostic-message", (nodes) =>
       nodes.map((node) => node.textContent ?? ""),
     );
-    const neverReached = await page.$$eval(".pane-note", (nodes) =>
-      nodes.filter((node) => node.textContent?.includes("Never reached")).length,
+    const stopped = await page.$eval(
+      "#play-codegen",
+      (el) => (el as HTMLButtonElement).disabled,
     );
-    if (diagnostics.length === 0) {
-      problems.push(`[${viewport.name}] a failing program showed no diagnostic`);
-    }
-    if (neverReached === 0) {
-      problems.push(`[${viewport.name}] no stage reported itself as never reached`);
-    }
+    if (diagnostics.length === 0) note("a failing program showed no diagnostic");
+    if (!stopped) note("a stage that never ran still offered a play button");
 
-    // Put the good program back before the accessibility scan and screenshot.
+    // Put a working program back before the accessibility scan and screenshot,
+    // with two stages mid-play so the shot shows the mechanic rather than the end.
     await page.$$eval("#presets .preset", (buttons) => {
-      (buttons[0] as HTMLButtonElement).click();
+      (buttons[3] as HTMLButtonElement).click();
     });
-    await new Promise((done) => setTimeout(done, 250));
+    await wait(300);
+    await scrubTo(page, "parse", 8);
+    await scrubTo(page, "codegen", 3);
 
     const violations = await axeScan(page);
     for (const violation of violations) {
-      problems.push(
-        `[${viewport.name}] axe ${violation.impact}: ${violation.id} on ${violation.nodes} node(s) — ${violation.help}`,
+      note(
+        `axe ${violation.impact}: ${violation.id} on ${violation.nodes} node(s) — ${violation.help}`,
       );
     }
-    report.push(
-      `${viewport.name} accessibility: ${violations.length === 0 ? "no serious or critical axe violations" : `${violations.length} violation(s)`}` +
-        `, keyboard: arrows and Home work, cursor survives a resize, diagnostics: "${diagnostics[0] ?? "none"}"`,
-    );
 
     const shot = join(OUT, `${viewport.name}.png`);
     await page.screenshot({ path: shot as `${string}.png`, fullPage: true });
 
     report.push(
-      `${viewport.name} ${viewport.width}x${viewport.height}: ${atEnd.max + 1} steps, ` +
-        `${shownAtStart} -> ${shownAtEnd} artefacts revealed, ` +
-        `first "${firstTitle.trim()}", middle "${midTitle.trim()}" -> ${shot}`,
+      `${viewport.name} ${viewport.width}x${viewport.height}: ${sections.length} sections, ` +
+        `revealed ${STAGES.map((s) => `${s}=${counts[s].start}->${counts[s].end}`).join(" ")}, ` +
+        `independent, keyboard ok, cursors survive resize, ` +
+        `${overflow <= 1 ? "no" : `${overflow}px`} overflow, ` +
+        `${violations.length === 0 ? "no serious axe violations" : `${violations.length} axe violation(s)`}, ` +
+        `diagnostic "${diagnostics[0] ?? "none"}" -> ${shot}`,
     );
     await page.close();
   }
@@ -312,7 +355,7 @@ async function main(): Promise<void> {
     for (const problem of problems) console.error(`  ${problem}`);
     process.exit(1);
   }
-  console.log("\nno console errors, no page errors, interaction works at both viewports");
+  console.log("\nall clear at both viewports");
 }
 
 main().catch((error: unknown) => {

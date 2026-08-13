@@ -28,10 +28,24 @@ these, and each one is here because breaking it cost me something.
 - **Every stage emits `Step[]`, not just a final artefact.** A stage that returns
   only its output cannot be scrubbed through and cannot explain itself. Steps are
   emitted as the work happens, never reconstructed afterwards.
-- **The page is a pure function of one integer.** All visible state derives from
-  the cursor. Panes are built once per compile and then only have classes
-  toggled; if rendering ever needs to know what the previous cursor was, the
-  design has gone wrong.
+- **Each stage is its own player, and its steps are numbered locally.** A stage's
+  step 3 is the third thing THAT stage did. Six cursors, six sliders, six play
+  buttons; a stage never reads another stage's cursor. Scrubbing one stage must
+  leave the other five untouched — there is a test for exactly that.
+- **A stage view is a pure function of that stage's cursor.** Panes are built once
+  per compile and then only have classes toggled; if rendering ever needs to know
+  what the previous cursor was, the design has gone wrong.
+- **Unrevealed artefacts use `visibility: hidden`, never a low opacity.** It keeps
+  the space reserved so nothing jumps, and it keeps text that has not been
+  produced yet out of the accessibility tree. Dimming instead left 53 elements of
+  unreadable text on the page as far as axe was concerned, and axe was right.
+- **A step whose span covers most of the file highlights nothing.** Painting every
+  line yellow is noise. Where a step really is about the whole file, the
+  commentary carries it — and prefer a narrow span in the first place: the
+  analyser points at a function's name, not its body.
+- **The accent colour means "here" and nothing else.** The current step and the
+  source it is reading. Never decoration, never a third meaning. Square corners,
+  thick rules, monospace: if a change would soften the page, it is wrong.
 - **Layout in CSS, state in JavaScript.** Never resize or reflow by script. The
   marker resizes mid-interaction, and the cursor has to survive it.
 - **Every artefact's span points into the original source.** Not the preprocessed
@@ -65,11 +79,11 @@ these, and each one is here because breaking it cost me something.
   CI.
 - **Run `pnpm shoot` before believing the page works.** It builds nothing itself,
   so `pnpm build` first. It serves `dist/`, drives real Chromium at 1920×1080 and
-  390×844, and fails on: any console or page error, a scrubber that changes
-  nothing, a missing source highlight, arrow/Home keys not moving the cursor, the
-  cursor not surviving a resize, the wrong number of visible panes per viewport, a
-  failing program that shows no diagnostic, any serious or critical axe violation,
-  and a gzipped bundle over 60kB. Screenshots land in `.screens/` — look at them.
+  390×844, and fails on: any console or page error, a stage player that changes
+  nothing, a stage that leaks into another, a stage that never highlights source,
+  arrow/Home keys not moving a cursor, a resize losing the cursors, a stage section
+  missing, horizontal overflow, a failing program that shows no diagnostic, any
+  serious or critical axe violation, and a gzipped bundle over 60kB. Screenshots land in `.screens/` — look at them.
   This is local-only (it needs a system Chromium), so it is deliberately not part
   of `pnpm check`, which has to keep working in CI.
 - To see what the page actually looks like rather than what you assume it looks

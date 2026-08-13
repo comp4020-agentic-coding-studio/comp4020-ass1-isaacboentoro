@@ -1,35 +1,44 @@
 import { compile } from "../compiler/pipeline";
-import type { Compilation, StageId } from "../compiler/types";
-import { STAGES, STAGE_TITLES } from "../compiler/types";
+import type { Compilation, Span, StageId } from "../compiler/types";
+import { STAGES } from "../compiler/types";
 import { type BuiltPanes, buildPanes } from "./panes";
 import { DEFAULT_PRESET, PRESETS } from "./presets";
-import { clampCursor } from "./reveal";
+import { clamp } from "./reveal";
 
 /**
- * One control drives everything on this page.
+ * Six players, one per stage.
  *
- * The whole visible state is a single integer: which step of the compilation we
- * are standing on. Panes are built once per compile and then only have classes
- * toggled, so dragging the scrubber stays smooth on a phone, and nothing about
- * the layout can reset the cursor — resizing mid-drag is safe because the cursor
- * lives here, in JavaScript, and the layout lives entirely in CSS.
+ * Each stage owns its own cursor, slider, play button and commentary, and knows
+ * nothing about the others: a stage's step 3 is the third thing THAT stage did.
+ * Every stage also echoes the source with its own highlight, so the answer to
+ * "what is this stage looking at" is always on screen next to what it produced.
+ *
+ * State lives here; layout lives entirely in CSS. That is what makes a resize
+ * mid-drag harmless.
  */
 
-const PLAY_INTERVAL_MS = 90;
+/** One step per this long. The commentary is a sentence, so it has to be read. */
+const PLAY_INTERVAL_MS = 900;
 const COMPILE_DEBOUNCE_MS = 120;
 
-type Elements = {
-  source: HTMLTextAreaElement;
-  mirror: HTMLElement;
-  presets: HTMLElement;
+/**
+ * Some steps are honestly about the whole file — laying out a frame, handing the
+ * text on. Marking every line for those is noise, not information, so above this
+ * share of the source the highlight is dropped and the commentary carries it.
+ */
+const WHOLE_FILE_SHARE = 0.6;
+
+type StagePlayer = {
+  stage: StageId;
   scrubber: HTMLInputElement;
   play: HTMLButtonElement;
   position: HTMLElement;
   title: HTMLElement;
   explain: HTMLElement;
-  ticks: HTMLElement;
-  pipeline: HTMLElement;
-  panes: Record<StageId, HTMLElement>;
+  echo: HTMLElement;
+  body: HTMLElement;
+  cursor: number;
+  timer?: number;
 };
 
 function required<T extends HTMLElement>(id: string): T {
@@ -39,36 +48,25 @@ function required<T extends HTMLElement>(id: string): T {
 }
 
 export function start(): void {
-  const panes = {} as Record<StageId, HTMLElement>;
-  // The scrolling body and the section that wraps it are different elements: the
-  // body is what panes.ts fills, the section is what the phone layout shows or
-  // hides. Mixing them up made every pane invisible at 390px.
-  const wrappers = {} as Record<StageId, HTMLElement>;
-  for (const stage of STAGES) {
-    const body = required<HTMLElement>(`pane-${stage}`);
-    panes[stage] = body;
-    wrappers[stage] = body.closest(".pane") ?? body;
-  }
-
-  const dom: Elements = {
-    source: required<HTMLTextAreaElement>("source"),
-    mirror: required("mirror"),
-    presets: required("presets"),
-    scrubber: required<HTMLInputElement>("scrubber"),
-    play: required<HTMLButtonElement>("play"),
-    position: required("position"),
-    title: required("step-title"),
-    explain: required("step-explain"),
-    ticks: required("stage-ticks"),
-    pipeline: required("pipeline"),
-    panes,
-  };
+  const source = required<HTMLTextAreaElement>("source");
+  const mirror = required("mirror");
+  const presets = required("presets");
 
   let compilation: Compilation = compile(DEFAULT_PRESET.source);
-  let built: BuiltPanes = { reveals: [], bodies: panes };
-  let cursor = 0;
-  let timer: number | undefined;
+  let built: BuiltPanes | undefined;
   let debounce: number | undefined;
+
+  const players: StagePlayer[] = STAGES.map((stage) => ({
+    stage,
+    scrubber: required<HTMLInputElement>(`scrub-${stage}`),
+    play: required<HTMLButtonElement>(`play-${stage}`),
+    position: required(`pos-${stage}`),
+    title: required(`title-${stage}`),
+    explain: required(`explain-${stage}`),
+    echo: required(`echo-${stage}`),
+    body: required(`pane-${stage}`),
+    cursor: 0,
+  }));
 
   // ------------------------------------------------------------------ presets
 
@@ -76,184 +74,181 @@ export function start(): void {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "preset";
-    button.append(withClass("span", "preset-name", preset.name));
-    button.append(withClass("span", "preset-about", preset.about));
+    button.append(text("span", "preset-name", preset.name));
+    button.append(text("span", "preset-about", preset.about));
     button.addEventListener("click", () => {
-      dom.source.value = preset.source;
-      recompile({ jumpToEnd: true });
+      source.value = preset.source;
+      recompile();
     });
-    dom.presets.append(button);
-  }
-
-  // ------------------------------------------------------------ stage jumping
-
-  const tickButtons = new Map<StageId, HTMLButtonElement>();
-  for (const stage of STAGES) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "tick";
-    button.dataset.stage = stage;
-    button.textContent = STAGE_TITLES[stage];
-    button.addEventListener("click", () => {
-      const first = compilation.steps.find((step) => step.stage === stage);
-      if (first) setCursor(first.index);
-    });
-    dom.ticks.append(button);
-    tickButtons.set(stage, button);
+    presets.append(button);
   }
 
   // -------------------------------------------------------------------- state
 
-  function recompile(options: { jumpToEnd?: boolean } = {}): void {
-    stop();
-    compilation = compile(dom.source.value);
-    built = buildPanes(compilation, dom.panes);
+  function recompile(): void {
+    for (const player of players) stop(player);
+    compilation = compile(source.value);
+    built = buildPanes(compilation, bodies());
+    highlightEditor(null);
 
-    const last = Math.max(0, compilation.steps.length - 1);
-    dom.scrubber.max = String(last);
-    dom.scrubber.disabled = compilation.steps.length <= 1;
-
-    for (const [stage, button] of tickButtons) {
-      const reachable = compilation.steps.some((step) => step.stage === stage);
-      button.disabled = !reachable;
+    for (const player of players) {
+      const steps = built.traces[player.stage].steps.length;
+      player.scrubber.max = String(Math.max(0, steps - 1));
+      player.scrubber.disabled = steps <= 1;
+      player.play.disabled = steps <= 1;
+      // Land on the end so the section reads as finished, then rewind to watch.
+      setCursor(player, Math.max(0, steps - 1));
     }
-
-    setCursor(options.jumpToEnd ? last : Math.min(cursor, last));
   }
 
-  function setCursor(next: number): void {
-    cursor = clampCursor(compilation, next);
-    dom.scrubber.value = String(cursor);
-    render();
+  function bodies(): Record<StageId, HTMLElement> {
+    const map = {} as Record<StageId, HTMLElement>;
+    for (const player of players) map[player.stage] = player.body;
+    return map;
   }
 
-  function render(): void {
-    const step = compilation.steps[cursor];
-
-    for (const { el, step: at } of built.reveals) {
-      el.classList.toggle("is-shown", at <= cursor);
-      el.classList.toggle("is-current", at === cursor);
-    }
-
-    dom.position.textContent = `step ${cursor + 1} of ${compilation.steps.length}`;
-    dom.title.textContent = step ? step.title : "nothing to do";
-    dom.explain.textContent = step ? step.explain : "";
-
-    const stage = step?.stage ?? "preprocess";
-    dom.pipeline.dataset.activeStage = stage;
-    for (const [id, wrapper] of Object.entries(wrappers)) {
-      wrapper.classList.toggle("is-active", id === stage);
-    }
-    for (const [id, button] of tickButtons) {
-      button.setAttribute("aria-current", id === stage ? "step" : "false");
-    }
-
-    highlight(step?.consumed ?? null);
-    scrollCurrentIntoView(stage);
+  function setCursor(player: StagePlayer, next: number): void {
+    const trace = built?.traces[player.stage];
+    const steps = trace?.steps.length ?? 0;
+    player.cursor = clamp(next, steps);
+    player.scrubber.value = String(player.cursor);
+    render(player);
   }
 
-  // ------------------------------------------------------- editor highlighting
+  function render(player: StagePlayer): void {
+    if (!built) return;
+    const trace = built.traces[player.stage];
+    const step = trace.steps[player.cursor];
 
-  function highlight(span: { start: number; end: number } | null): void {
+    for (const { el, step: at } of built.reveals[player.stage]) {
+      el.classList.toggle("is-shown", at <= player.cursor);
+      el.classList.toggle("is-current", at === player.cursor);
+    }
+
+    player.position.textContent =
+      trace.steps.length === 0
+        ? "NO STEPS"
+        : `STEP ${player.cursor + 1} / ${trace.steps.length}`;
+    player.title.textContent = step?.title ?? "did not run";
+    player.explain.textContent =
+      step?.explain ?? "The compiler stopped before this stage.";
+
+    const section = player.body.closest(".stage");
+    section?.classList.toggle("is-empty", trace.steps.length === 0);
+
+    highlightEcho(player, step?.consumed ?? null);
+    scrollCurrentIntoView(player);
+  }
+
+  // -------------------------------------------------------------- highlighting
+
+  /** Rebuild a source echo with one span marked. Text nodes only, never HTML. */
+  function paint(target: HTMLElement, span: Span | null): void {
     const text = compilation.source;
-    dom.mirror.replaceChildren();
-    if (!span || span.end <= span.start) {
-      dom.mirror.append(document.createTextNode(text));
+    target.replaceChildren();
+    const covers = span ? (span.end - span.start) / Math.max(1, text.length) : 0;
+    if (!span || span.end <= span.start || covers > WHOLE_FILE_SHARE) {
+      target.append(document.createTextNode(text));
       return;
     }
     const start = Math.min(span.start, text.length);
     const end = Math.min(span.end, text.length);
-    dom.mirror.append(document.createTextNode(text.slice(0, start)));
+    target.append(document.createTextNode(text.slice(0, start)));
     const mark = document.createElement("mark");
     mark.textContent = text.slice(start, end);
-    dom.mirror.append(mark);
-    dom.mirror.append(document.createTextNode(text.slice(end)));
+    target.append(mark);
+    target.append(document.createTextNode(text.slice(end)));
   }
 
-  /** Keep the current artefact visible without scrolling the whole page. */
-  function scrollCurrentIntoView(stage: StageId): void {
-    const body = built.bodies[stage];
-    if (!body) return;
-    const current = body.querySelector<HTMLElement>(".is-current");
-    if (!current) return;
+  function highlightEcho(player: StagePlayer, span: Span | null): void {
+    paint(player.echo, span);
+  }
 
-    const scroller = dom.panes[stage];
-    const top = current.offsetTop - scroller.offsetTop;
+  function highlightEditor(span: Span | null): void {
+    paint(mirror, span);
+  }
+
+  /** Keep the current artefact in view without moving the page. */
+  function scrollCurrentIntoView(player: StagePlayer): void {
+    const current = player.body.querySelector<HTMLElement>(".is-current");
+    if (!current) return;
+    const top = current.offsetTop - player.body.offsetTop;
     const bottom = top + current.offsetHeight;
-    if (top < scroller.scrollTop) {
-      scroller.scrollTop = Math.max(0, top - 16);
-    } else if (bottom > scroller.scrollTop + scroller.clientHeight) {
-      scroller.scrollTop = bottom - scroller.clientHeight + 16;
+    if (top < player.body.scrollTop) {
+      player.body.scrollTop = Math.max(0, top - 16);
+    } else if (bottom > player.body.scrollTop + player.body.clientHeight) {
+      player.body.scrollTop = bottom - player.body.clientHeight + 16;
     }
   }
 
   // ----------------------------------------------------------------- playback
 
-  function playing(): boolean {
-    return timer !== undefined;
+  function playing(player: StagePlayer): boolean {
+    return player.timer !== undefined;
   }
 
-  function stop(): void {
-    if (timer !== undefined) window.clearInterval(timer);
-    timer = undefined;
-    dom.play.setAttribute("aria-pressed", "false");
-    dom.play.textContent = "Play";
+  function stop(player: StagePlayer): void {
+    if (player.timer !== undefined) window.clearInterval(player.timer);
+    player.timer = undefined;
+    player.play.setAttribute("aria-pressed", "false");
+    player.play.textContent = "PLAY";
   }
 
-  function play(): void {
-    if (compilation.steps.length <= 1) return;
-    // Pressing play at the end starts over, the way any player does.
-    if (cursor >= compilation.steps.length - 1) setCursor(0);
-    dom.play.setAttribute("aria-pressed", "true");
-    dom.play.textContent = "Pause";
-    timer = window.setInterval(() => {
-      if (cursor >= compilation.steps.length - 1) {
-        stop();
+  function play(player: StagePlayer): void {
+    const steps = built?.traces[player.stage].steps.length ?? 0;
+    if (steps <= 1) return;
+    // Pressing play at the end starts this stage over, as any player does.
+    if (player.cursor >= steps - 1) setCursor(player, 0);
+    player.play.setAttribute("aria-pressed", "true");
+    player.play.textContent = "PAUSE";
+    player.timer = window.setInterval(() => {
+      if (player.cursor >= steps - 1) {
+        stop(player);
         return;
       }
-      setCursor(cursor + 1);
+      setCursor(player, player.cursor + 1);
     }, PLAY_INTERVAL_MS);
   }
 
-  dom.play.addEventListener("click", () => {
-    if (playing()) stop();
-    else play();
-  });
-
   // ------------------------------------------------------------------- events
 
-  dom.scrubber.addEventListener("input", () => {
-    stop();
-    setCursor(Number(dom.scrubber.value));
-  });
+  for (const player of players) {
+    player.play.addEventListener("click", () => {
+      if (playing(player)) stop(player);
+      else play(player);
+    });
 
-  // The range handles arrows and Home/End itself; space is the one a player owes you.
-  dom.scrubber.addEventListener("keydown", (event) => {
-    if (event.key === " ") {
+    player.scrubber.addEventListener("input", () => {
+      stop(player);
+      setCursor(player, Number(player.scrubber.value));
+    });
+
+    // The range handles arrows and Home/End itself; space is what a player owes.
+    player.scrubber.addEventListener("keydown", (event) => {
+      if (event.key !== " ") return;
       event.preventDefault();
-      if (playing()) stop();
-      else play();
-    }
-  });
+      if (playing(player)) stop(player);
+      else play(player);
+    });
+  }
 
-  dom.source.addEventListener("input", () => {
+  source.addEventListener("input", () => {
     if (debounce !== undefined) window.clearTimeout(debounce);
     debounce = window.setTimeout(() => recompile(), COMPILE_DEBOUNCE_MS);
   });
 
-  // The mirror sits under a transparent textarea, so their scroll must agree.
-  dom.source.addEventListener("scroll", () => {
-    dom.mirror.scrollTop = dom.source.scrollTop;
-    dom.mirror.scrollLeft = dom.source.scrollLeft;
+  source.addEventListener("scroll", () => {
+    mirror.scrollTop = source.scrollTop;
+    mirror.scrollLeft = source.scrollLeft;
   });
 
-  dom.source.value = DEFAULT_PRESET.source;
-  recompile({ jumpToEnd: true });
+  source.value = DEFAULT_PRESET.source;
+  recompile();
 }
 
-function withClass(tag: string, className: string, text: string): HTMLElement {
+function text(tag: string, className: string, content: string): HTMLElement {
   const node = document.createElement(tag);
   node.className = className;
-  node.textContent = text;
+  node.textContent = content;
   return node;
 }

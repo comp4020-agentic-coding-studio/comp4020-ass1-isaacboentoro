@@ -129,7 +129,7 @@ class Analyser {
     );
 
     for (const func of program.functions) {
-      this.declare(func.name, func.returnType, "function", func.span, {
+      this.declare(func.name, func.returnType, "function", func.nameSpan, {
         params: func.params.map((param) => param.type),
         returns: func.returnType,
       });
@@ -154,7 +154,7 @@ class Analyser {
     this.log.add(
       `enter ${func.name}`,
       "A function body is a fresh frame. Slot numbering restarts, so two functions can both use the same offsets.",
-      func.span,
+      func.nameSpan,
       [],
     );
 
@@ -173,7 +173,7 @@ class Analyser {
     this.log.add(
       `lay out ${func.name}'s frame`,
       `${this.frameUsed} bytes for the names you wrote. The compiler is not finished spending stack — the next stage invents temporaries that need slots too.`,
-      func.span,
+      func.nameSpan,
       [],
     );
 

@@ -79,7 +79,7 @@ class Lowerer {
     const frame = this.semantics.frames[func.name] ?? 0;
 
     this.emit(
-      { op: "enter", func: func.name, frame, span: func.span },
+      { op: "enter", func: func.name, frame, span: func.nameSpan },
       `enter ${func.name}`,
       `The function gets a prologue: claim ${frame} bytes of stack, then start work. Nothing in the source asked for this.`,
     );

@@ -3,8 +3,8 @@
 ## What I built
 
 A one-page interactive explainer of what compiling C actually does. You type C
-into an editor and one slider walks the whole compilation, step by step, through
-six panes: preprocessing, scanning, parsing, semantic analysis, lowering to
+into an editor and each of six stages plays its own work back, step by step:
+preprocessing, scanning, parsing, semantic analysis, lowering to
 three-address IR, and x86-64 assembly. The compiler is mine, written in
 TypeScript and running in the visitor's browser — no wasm, no server. The idea
 the page argues for is that compiling is not one translation but a sequence of

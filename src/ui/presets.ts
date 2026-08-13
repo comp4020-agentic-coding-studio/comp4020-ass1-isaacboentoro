@@ -16,6 +16,18 @@ export type Preset = {
 
 export const PRESETS: Preset[] = [
   {
+    name: "Macro",
+    about: "the preprocessor edits text before the compiler sees it",
+    source: `#define SIZE 4
+#define DOUBLE(x) ((x) + (x))
+
+int main() {
+  // SIZE is gone before the scanner runs
+  int n = DOUBLE(SIZE);
+  return n;
+}`,
+  },
+  {
     name: "Arithmetic",
     about: "precedence becomes tree shape, then temporaries",
     source: `int main() {
@@ -76,18 +88,6 @@ int main() {
 }`,
   },
   {
-    name: "Macro",
-    about: "the preprocessor edits text before the compiler sees it",
-    source: `#define SIZE 4
-#define DOUBLE(x) ((x) + (x))
-
-int main() {
-  // SIZE is gone before the scanner runs
-  int n = DOUBLE(SIZE);
-  return n;
-}`,
-  },
-  {
     name: "A mistake",
     about: "which stage catches which kind of bug",
     source: `int main() {
@@ -97,4 +97,9 @@ int main() {
   },
 ];
 
+/**
+ * The page opens on the macro example on purpose: it is the only one where the
+ * first stage has work to do, and a dead player at the top of the page reads as
+ * a broken page rather than an honest one.
+ */
 export const DEFAULT_PRESET = PRESETS[0];
