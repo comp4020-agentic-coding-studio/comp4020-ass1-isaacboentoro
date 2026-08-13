@@ -1,5 +1,7 @@
+import { decay, isArray, isInteger, pointee, sizeOf, typeName } from "./ctypes";
 import { StepLog } from "./steps";
 import type {
+  CType,
   Expr,
   FunctionDecl,
   IRInstr,
@@ -23,6 +25,11 @@ import type {
 
 const CONST = (value: number): IRValue => ({ kind: "const", value });
 
+/** How many bytes a value of this type occupies once it is in hand. */
+function widthOf(type: CType): number {
+  return Math.max(1, sizeOf(decay(type)));
+}
+
 class Lowerer {
   readonly log = new StepLog("ir");
   private readonly instrs: IRInstr[] = [];
@@ -34,10 +41,15 @@ class Lowerer {
 
   constructor(private readonly semantics: SemanticsResult) {}
 
-  private temp(): { kind: "temp"; name: string } {
-    const value = { kind: "temp" as const, name: `t${this.nextTemp}` };
+  private temp(width = 4): { kind: "temp"; name: string; width: number } {
+    const value = { kind: "temp" as const, name: `t${this.nextTemp}`, width };
     this.nextTemp += 1;
     return value;
+  }
+
+  /** The type the analyser worked out for a node. */
+  private typeOf(expr: Expr): CType {
+    return this.semantics.types[expr.id] ?? { kind: "int" };
   }
 
   private label(hint: string): string {
@@ -61,9 +73,9 @@ class Lowerer {
   }
 
   /** The IRValue standing for a declared name, keyed by symbol identity. */
-  private slotOf(nodeId: string, name: string): IRValue {
+  private slotOf(nodeId: string, name: string, width: number): IRValue {
     const symbol = this.semantics.resolved[nodeId];
-    return { kind: "var", symbol: symbol ?? name, name };
+    return { kind: "var", symbol: symbol ?? name, name, width };
   }
 
   // ------------------------------------------------------------------ program
@@ -93,7 +105,7 @@ class Lowerer {
       this.emit(
         {
           op: "return",
-          ...(func.returnType === "void" ? {} : { value: CONST(0) }),
+          ...(func.returnType.kind === "void" ? {} : { value: CONST(0) }),
           span: func.span,
         },
         "close the function",
@@ -124,7 +136,7 @@ class Lowerer {
         this.emit(
           {
             op: "move",
-            dest: this.slotOf(stmt.id, stmt.name),
+            dest: this.slotOf(stmt.id, stmt.name, widthOf(stmt.type)),
             src: value,
             span: stmt.span,
           },
@@ -262,8 +274,29 @@ class Lowerer {
       case "CharLit":
         return CONST(expr.value);
 
-      case "Ident":
-        return this.slotOf(expr.id, expr.name);
+      case "Ident": {
+        const type = this.typeOf(expr);
+        // An array used as a value is its own address. Nothing is copied: this
+        // is the decay rule, and it is the only reason `f(a)` is cheap.
+        if (isArray(type)) return this.lowerAddress(expr);
+        return this.slotOf(expr.id, expr.name, widthOf(type));
+      }
+
+      case "AddressOf":
+        return this.lowerAddress(expr.operand);
+
+      case "Deref":
+      case "Index": {
+        const address = this.lowerAddress(expr);
+        const width = widthOf(this.typeOf(expr));
+        const dest = this.temp(width);
+        this.emit(
+          { op: "load", dest, from: address, width, span: expr.span },
+          `${dest.name} = *${show(address)}`,
+          `Reading ${width} byte${width === 1 ? "" : "s"} from that address. The address alone never said how many — the type did.`,
+        );
+        return dest;
+      }
 
       case "Unary": {
         const operand = this.lowerExpr(expr.operand);
@@ -280,9 +313,25 @@ class Lowerer {
 
       case "Binary": {
         if (expr.op === "&&" || expr.op === "||") return this.lowerShortCircuit(expr);
+
+        const leftType = decay(this.typeOf(expr.left));
+        const rightType = decay(this.typeOf(expr.right));
+        const pointerSide =
+          pointee(leftType) && isInteger(rightType)
+            ? "left"
+            : pointee(rightType) && isInteger(leftType)
+              ? "right"
+              : null;
+
+        // `p + 1` is not `p` plus one. Scale the integer side by the element
+        // size first, and emit that multiply so it is visible rather than implied.
+        if (pointerSide && (expr.op === "+" || expr.op === "-")) {
+          return this.lowerPointerArithmetic(expr, pointerSide);
+        }
+
         const left = this.lowerExpr(expr.left);
         const right = this.lowerExpr(expr.right);
-        const dest = this.temp();
+        const dest = this.temp(widthOf(this.typeOf(expr)));
         this.emit(
           {
             op: "binary",
@@ -300,13 +349,28 @@ class Lowerer {
 
       case "Assign": {
         const value = this.lowerExpr(expr.value);
-        const dest = this.slotOf(expr.id, expr.name);
+        const width = widthOf(this.typeOf(expr));
+
+        // Assigning to a plain name is a store to a known slot. Assigning
+        // through `*p` or `a[i]` means computing an address first, and the
+        // difference between those two is the whole point of an lvalue.
+        if (expr.target.kind === "Ident") {
+          const dest = this.slotOf(expr.target.id, expr.target.name, width);
+          this.emit(
+            { op: "move", dest, src: value, span: expr.span },
+            `store into ${expr.target.name}`,
+            "Assignment is an expression in C, so its value is what was stored — which is why `a = b = 1` works.",
+          );
+          return dest;
+        }
+
+        const address = this.lowerAddress(expr.target);
         this.emit(
-          { op: "move", dest, src: value, span: expr.span },
-          `store into ${expr.name}`,
-          "Assignment is an expression in C, so its value is what was stored — which is why `a = b = 1` works.",
+          { op: "store", to: address, src: value, width, span: expr.span },
+          `*${show(address)} = ${show(value)}`,
+          `Writing ${width} byte${width === 1 ? "" : "s"} to a computed address. Nothing here checks that the address is one you own.`,
         );
-        return dest;
+        return value;
       }
 
       case "Call": {
@@ -328,6 +392,129 @@ class Lowerer {
         return dest;
       }
     }
+  }
+
+  /**
+   * The address of a place, rather than the value in it.
+   *
+   * This is the lvalue path, and having it separate from `lowerExpr` is what
+   * makes pointers work at all: `x = 1` needs the slot, `*p = 1` needs the value
+   * in p, and `a[i] = 1` needs arithmetic. The source spells all three the same
+   * way, with an `=`.
+   */
+  private lowerAddress(expr: Expr): IRValue {
+    switch (expr.kind) {
+      case "Ident": {
+        const symbol = this.semantics.resolved[expr.id] ?? expr.name;
+        const dest = this.temp(8);
+        this.emit(
+          { op: "addr", dest, symbol, name: expr.name, span: expr.span },
+          `${dest.name} = &${expr.name}`,
+          "The address of a frame slot. A name is a place, and this is the instruction that says where.",
+        );
+        return dest;
+      }
+
+      // `*p` as a place is just p as a value — the pointer already IS the address.
+      case "Deref":
+        return this.lowerExpr(expr.operand);
+
+      case "Index": {
+        const elementType = this.typeOf(expr);
+        const size = Math.max(1, sizeOf(elementType));
+        const base = isArray(this.typeOf(expr.array))
+          ? this.lowerAddress(expr.array)
+          : this.lowerExpr(expr.array);
+        const index = this.lowerExpr(expr.index);
+
+        let offset = index;
+        if (size !== 1) {
+          const scaled = this.temp(8);
+          this.emit(
+            {
+              op: "binary",
+              dest: scaled,
+              operator: "*",
+              left: index,
+              right: CONST(size),
+              span: expr.span,
+            },
+            `${scaled.name} = i * ${size}`,
+            `\`a[i]\` is \`*(a + i)\`, and adding one to a ${typeName(elementType)}* moves ${size} bytes. The multiply is the bracket's real cost.`,
+          );
+          offset = scaled;
+        }
+
+        const address = this.temp(8);
+        this.emit(
+          {
+            op: "binary",
+            dest: address,
+            operator: "+",
+            left: base,
+            right: offset,
+            span: expr.span,
+          },
+          `${address.name} = base + offset`,
+          "The element's address. Nothing has been read yet — this is only where to look.",
+        );
+        return address;
+      }
+
+      default:
+        // The analyser rejects everything else before we get here.
+        return this.lowerExpr(expr);
+    }
+  }
+
+  /**
+   * `p + n` where p is a pointer. The integer side is multiplied by the element
+   * size, which is the step everyone forgets is happening.
+   */
+  private lowerPointerArithmetic(
+    expr: Expr & { kind: "Binary" },
+    pointerSide: "left" | "right",
+  ): IRValue {
+    const pointerExpr = pointerSide === "left" ? expr.left : expr.right;
+    const integerExpr = pointerSide === "left" ? expr.right : expr.left;
+    const target = pointee(decay(this.typeOf(pointerExpr)));
+    const size = target ? Math.max(1, sizeOf(target)) : 1;
+
+    const pointer = this.lowerExpr(pointerExpr);
+    const count = this.lowerExpr(integerExpr);
+
+    let offset = count;
+    if (size !== 1) {
+      const scaled = this.temp(8);
+      this.emit(
+        {
+          op: "binary",
+          dest: scaled,
+          operator: "*",
+          left: count,
+          right: CONST(size),
+          span: expr.span,
+        },
+        `${scaled.name} = n * ${size}`,
+        `Each ${target ? typeName(target) : "element"} is ${size} bytes, so \`${expr.op} ${1}\` means \`${expr.op} ${size}\` in addresses. This multiply is what \`p + 1\` actually costs.`,
+      );
+      offset = scaled;
+    }
+
+    const dest = this.temp(8);
+    this.emit(
+      {
+        op: "binary",
+        dest,
+        operator: expr.op,
+        left: pointer,
+        right: offset,
+        span: expr.span,
+      },
+      `${dest.name} = p ${expr.op} offset`,
+      "Now it is plain integer arithmetic on an address. The type has done its work and drops out here.",
+    );
+    return dest;
   }
 
   /**
@@ -393,13 +580,13 @@ export function lower(program: Program, semantics: SemanticsResult): IRResult {
   return lowerer.result();
 }
 
+/** How a value is written in the listing and in step titles. */
+function show(value: IRValue): string {
+  return value.kind === "const" ? String(value.value) : value.name;
+}
+
 /** One line of the IR listing, for the pane and for tests. */
 export function formatInstr(instr: IRInstr): string {
-  const show = (value: IRValue): string => {
-    if (value.kind === "const") return String(value.value);
-    return value.name;
-  };
-
   switch (instr.op) {
     case "enter":
       return `${instr.func}: enter frame=${instr.frame}`;
@@ -421,5 +608,11 @@ export function formatInstr(instr: IRInstr): string {
       return `${instr.dest ? `${show(instr.dest)} = ` : ""}call ${instr.callee}(${instr.args.map(show).join(", ")})`;
     case "return":
       return instr.value ? `return ${show(instr.value)}` : "return";
+    case "addr":
+      return `${show(instr.dest)} = &${instr.name}`;
+    case "load":
+      return `${show(instr.dest)} = *${show(instr.from)}`;
+    case "store":
+      return `*${show(instr.to)} = ${show(instr.src)}`;
   }
 }

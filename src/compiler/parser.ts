@@ -1,4 +1,5 @@
 import { StepLog } from "./steps";
+import { CHAR, INT, VOID, arrayOf, isArray, pointerTo, typeName } from "./ctypes";
 import type {
   CType,
   Diagnostic,
@@ -141,11 +142,89 @@ class Parser {
       );
     }
     const token = this.advance();
-    return { type: token.text as CType, token };
+    const base = token.text === "int" ? INT : token.text === "char" ? CHAR : VOID;
+    return { type: base, token };
+  }
+
+  /**
+   * A declarator: the stars before a name and the brackets after it.
+   *
+   * C reads declarations inside-out, which is how `int (*a)[10]` differs from
+   * `int *a[10]`. This subset deliberately accepts only the simple shapes —
+   * `int x`, `int *p`, `int **q`, `int a[10]` — and says so rather than
+   * mis-parsing anything cleverer.
+   */
+  private parseDeclarator(
+    base: CType,
+    options: { arrays: "sized" | "decayed" | "no" },
+  ): { type: CType; nameToken: Token } {
+    let type = base;
+    while (this.accept("*")) type = pointerTo(type);
+
+    if (this.at("(")) {
+      throw new ParseError(
+        "this declaration is too clever for this explainer",
+        this.peek().span,
+        "Function pointers and parenthesised declarators are out of subset. Try `int *p` or `int a[10]`.",
+      );
+    }
+
+    const nameToken = this.peek();
+    if (nameToken.kind !== "identifier") {
+      throw new ParseError(
+        "expected a name in this declaration",
+        nameToken.span,
+        "Declarations look like `int x;`, `int *p;` or `int a[10];`.",
+      );
+    }
+    this.advance();
+
+    if (this.at("[")) {
+      const open = this.advance();
+      if (options.arrays === "no") {
+        throw new ParseError(
+          "an array cannot be declared here",
+          open.span,
+          "Arrays are locals and parameters only.",
+        );
+      }
+
+      // `int a[]` as a parameter is a pointer; C decays it and so do we.
+      if (options.arrays === "decayed" && this.at("]")) {
+        this.advance();
+        return { type: pointerTo(type), nameToken };
+      }
+
+      const size = this.peek();
+      if (size.kind !== "number" || (size.value ?? 0) <= 0) {
+        throw new ParseError(
+          "an array needs a constant length",
+          size.span,
+          "Write `int a[10];` — the length has to be known while compiling.",
+        );
+      }
+      this.advance();
+      const close = this.expect("]", "to close the array length");
+      type = options.arrays === "decayed" ? pointerTo(type) : arrayOf(type, size.value ?? 0);
+
+      if (this.at("[")) {
+        throw new ParseError(
+          "only one dimension is supported",
+          this.peek().span,
+          "A second dimension changes what the name decays to, which this explainer does not model.",
+        );
+      }
+      void close;
+    }
+
+    return { type, nameToken };
   }
 
   private parseFunction(): FunctionDecl {
-    const { type: returnType, token: typeToken } = this.parseType();
+    const { type: base, token: typeToken } = this.parseType();
+    let returnType = base;
+    while (this.accept("*")) returnType = pointerTo(returnType);
+
     const nameToken = this.peek();
     if (nameToken.kind !== "identifier") {
       throw new ParseError(
@@ -186,16 +265,16 @@ class Parser {
   }
 
   private parseParam(): Param {
-    const { type, token } = this.parseType();
-    const nameToken = this.peek();
-    if (nameToken.kind !== "identifier") {
-      throw new ParseError("expected a parameter name", nameToken.span);
-    }
-    this.advance();
+    const { type: base, token } = this.parseType();
+    // A parameter written `int a[]` is a pointer. C says so, and pretending
+    // otherwise is where the array/pointer confusion starts.
+    const { type, nameToken } = this.parseDeclarator(base, { arrays: "decayed" });
     const id = this.id();
     this.note(
       `parameter ${nameToken.text}`,
-      "Parameters are declarations too — they will get frame slots like locals do.",
+      type.kind === "pointer"
+        ? "An array parameter is a pointer — C passes the address, never the elements. The size is gone."
+        : "Parameters are declarations too — they will get frame slots like locals do.",
       spanOver(token.span, nameToken.span),
       [id],
     );
@@ -244,30 +323,35 @@ class Parser {
   }
 
   private parseVarDecl(): Stmt {
-    const { type, token } = this.parseType();
-    const nameToken = this.peek();
-    if (nameToken.kind !== "identifier") {
-      throw new ParseError(
-        "expected a variable name after the type",
-        nameToken.span,
-        "Declarations in this subset are simple: `int x;` or `int x = 1;`.",
-      );
-    }
-    this.advance();
-    if (this.at("(")) {
+    const { type: base, token } = this.parseType();
+    if (this.peek().kind === "identifier" && this.peek(1).text === "(") {
       throw new ParseError(
         "functions cannot be defined inside a function",
-        nameToken.span,
+        this.peek().span,
         "Move the definition to the top level.",
       );
     }
+    const { type, nameToken } = this.parseDeclarator(base, { arrays: "sized" });
+
     const id = this.id();
     let init: Expr | undefined;
-    if (this.accept("=")) init = this.parseExpression();
+    if (this.at("=")) {
+      const equals = this.advance();
+      if (isArray(type)) {
+        throw new ParseError(
+          "an array cannot be initialised here",
+          equals.span,
+          "Brace initialisers are out of subset. Declare `int a[3];` and assign each element.",
+        );
+      }
+      init = this.parseExpression();
+    }
     const semi = this.expect(";", "to end the declaration");
     this.note(
       `declare ${nameToken.text}`,
-      "A declaration introduces a name. The parser records it; whether it is legal here is the next stage's problem.",
+      isArray(type)
+        ? `An array reserves ${typeName(type)} worth of contiguous stack in one go. The name is not a pointer — it names the whole block.`
+        : "A declaration introduces a name. The parser records it; whether it is legal here is the next stage's problem.",
       spanOver(token.span, semi.span),
       [id],
     );
@@ -427,29 +511,40 @@ class Parser {
     return this.parseAssignment();
   }
 
+  /**
+   * Parse the left side first, then look for `=`.
+   *
+   * With pointers, an assignment target is no longer just a name — `*p = 1` and
+   * `a[i] = 2` are both legal — so the parser cannot decide from one token of
+   * lookahead. It parses an expression and then reinterprets it as a target,
+   * which is close to how C's grammar actually defines it.
+   */
   private parseAssignment(): Expr {
-    // Assignment is right-associative, so recurse rather than loop.
-    if (this.peek().kind === "identifier" && this.peek(1).text === "=") {
-      const nameToken = this.advance();
-      this.advance();
-      const value = this.parseAssignment();
-      const id = this.id();
-      this.note(
-        `assign to ${nameToken.text}`,
-        "Assignment leans right: `a = b = 1` parses as `a = (b = 1)`.",
-        spanOver(nameToken.span, value.span),
-        [id],
+    const left = this.parseBinary(1);
+    if (!this.at("=")) return left;
+
+    this.advance();
+    if (left.kind !== "Ident" && left.kind !== "Deref" && left.kind !== "Index") {
+      throw new ParseError(
+        "this cannot be assigned to",
+        left.span,
+        "The left of `=` has to name a place: a variable, `*p`, or `a[i]`.",
       );
-      return {
-        id,
-        kind: "Assign",
-        span: spanOver(nameToken.span, value.span),
-        name: nameToken.text,
-        nameSpan: nameToken.span,
-        value,
-      };
     }
-    return this.parseBinary(1);
+
+    // Right-associative, so recurse rather than loop: `a = b = 1` is `a = (b = 1)`.
+    const value = this.parseAssignment();
+    const id = this.id();
+    const span = spanOver(left.span, value.span);
+    this.note(
+      "assign",
+      left.kind === "Ident"
+        ? "Assignment leans right: `a = b = 1` parses as `a = (b = 1)`."
+        : "The left side is a place, not a value. Lowering will compute its address rather than reading it.",
+      span,
+      [id],
+    );
+    return { id, kind: "Assign", span, target: left, value };
   }
 
   /** Precedence climbing: parse operators at `minPrecedence` or tighter. */
@@ -478,6 +573,26 @@ class Parser {
 
   private parseUnary(): Expr {
     const token = this.peek();
+
+    if (token.kind === "punct" && (token.text === "*" || token.text === "&")) {
+      this.advance();
+      const operand = this.parseUnary();
+      const id = this.id();
+      const span = spanOver(token.span, operand.span);
+      const deref = token.text === "*";
+      this.note(
+        deref ? "dereference" : "address of",
+        deref
+          ? "The same character that means multiply between two operands means \"follow this address\" in front of one. Position decides, not spelling."
+          : "`&` asks for the address of a place. It is the only way to get one, and it is why the variable had to live in memory at all.",
+        span,
+        [id],
+      );
+      return deref
+        ? { id, kind: "Deref", span, operand }
+        : { id, kind: "AddressOf", span, operand };
+    }
+
     if (token.kind === "punct" && (token.text === "-" || token.text === "!")) {
       this.advance();
       const operand = this.parseUnary();
@@ -491,7 +606,30 @@ class Parser {
       );
       return { id, kind: "Unary", span, op: token.text, operand };
     }
-    return this.parsePrimary();
+
+    return this.parsePostfix();
+  }
+
+  /** `a[i]`, and `a[i][j]` would chain here if the subset allowed it. */
+  private parsePostfix(): Expr {
+    let value = this.parsePrimary();
+
+    while (this.at("[")) {
+      this.advance();
+      const index = this.parseExpression();
+      const close = this.expect("]", "to close the index");
+      const id = this.id();
+      const span = spanOver(value.span, close.span);
+      this.note(
+        "index",
+        "`a[i]` is defined as `*(a + i)` — brackets are notation for pointer arithmetic, which is why `i[a]` is also legal C.",
+        span,
+        [id],
+      );
+      value = { id, kind: "Index", span, array: value, index };
+    }
+
+    return value;
   }
 
   private parsePrimary(): Expr {
@@ -552,7 +690,7 @@ class Parser {
     throw new ParseError(
       `expected a value, found ${found}`,
       token.span,
-      "A value is a number, a character, a name, a call, or a group in parentheses.",
+      "A value is a number, a character, a name, a call, `*p`, `&x`, or a group in parentheses.",
     );
   }
 

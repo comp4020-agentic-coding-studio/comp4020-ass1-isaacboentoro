@@ -5,6 +5,7 @@ import { formatInstr } from "../src/compiler/ir";
 import { compile } from "../src/compiler/pipeline";
 import { analyse } from "../src/compiler/semantics";
 import { preprocess } from "../src/compiler/preprocess";
+import { INT, typeName } from "../src/compiler/ctypes";
 import type { AstNode, Expr, Span, Stmt } from "../src/compiler/types";
 import { childrenOf, labelOf } from "../src/compiler/types";
 
@@ -202,7 +203,7 @@ describe("parse", () => {
     expect(error).toBeUndefined();
     expect(program.functions).toHaveLength(1);
     expect(program.functions[0].name).toBe("main");
-    expect(program.functions[0].returnType).toBe("int");
+    expect(program.functions[0].returnType).toEqual(INT);
   });
 
   it("gives `*` tighter precedence than `+`", () => {
@@ -223,7 +224,8 @@ describe("parse", () => {
 
   it("makes assignment right-associative", () => {
     const stmts = bodyOf("int main() { int a; int b; a = b = 1; return a; }");
-    expect(sketch(stmts[2])).toBe("(; (a = (b = 1)))");
+    // The target is a whole subtree now, not a name on the node.
+    expect(sketch(stmts[2])).toBe("(; (= a (= b 1)))");
   });
 
   it("binds unary minus tighter than any binary operator", () => {
@@ -432,7 +434,7 @@ describe("analyse", () => {
     const result = analyse(parsed.program);
     const returned = parsed.program.functions[0].body.stmts[2];
     if (returned.kind !== "Return" || !returned.value) throw new Error("no return");
-    expect(result.types[returned.value.id]).toBe("int");
+    expect(typeName(result.types[returned.value.id])).toBe("int");
   });
 
   it("scopes a for-header declaration to the loop", () => {
@@ -654,5 +656,215 @@ describe("generate assembly", () => {
       if (line.kind === "directive") continue;
       expect(irIds.has(line.from ?? "")).toBe(true);
     }
+  });
+});
+
+describe("pointers and arrays", () => {
+  function compileOk(source: string) {
+    const result = compile(source);
+    expect(result.error, result.error?.message).toBeUndefined();
+    return result;
+  }
+
+  function failure(source: string) {
+    const result = compile(source);
+    expect(result.error, "expected this to be rejected").toBeDefined();
+    return result.error!;
+  }
+
+  function irOf(source: string): string[] {
+    return compileOk(source).ir.instrs.map(formatInstr);
+  }
+
+  function inMain(source: string): string[] {
+    const lines = irOf(source);
+    return lines.slice(lines.findIndex((line) => line.startsWith("main:")) + 1);
+  }
+
+  function typeOfReturn(source: string): string {
+    const result = compileOk(source);
+    const main = result.parse.program.functions.at(-1);
+    const returned = main?.body.stmts.at(-1);
+    if (returned?.kind !== "Return" || !returned.value) throw new Error("no return");
+    return typeName(result.semantics.types[returned.value.id]);
+  }
+
+  // ------------------------------------------------------------------- parsing
+
+  it("parses a pointer declarator", () => {
+    const result = compileOk("int main() { int x; int *p = &x; return *p; }");
+    const decl = result.parse.program.functions[0].body.stmts[1];
+    if (decl.kind !== "VarDecl") throw new Error("expected a declaration");
+    expect(typeName(decl.type)).toBe("int*");
+  });
+
+  it("parses an array declarator with its length", () => {
+    const result = compileOk("int main() { int a[10]; a[0] = 1; return a[0]; }");
+    const decl = result.parse.program.functions[0].body.stmts[0];
+    if (decl.kind !== "VarDecl") throw new Error("expected a declaration");
+    expect(typeName(decl.type)).toBe("int[10]");
+  });
+
+  it("stacks stars for a pointer to a pointer", () => {
+    expect(typeOfReturn("int main() { int x; int *p = &x; int **q = &p; return **q; }"))
+      .toBe("int");
+  });
+
+  it("treats an array parameter as a pointer, because C does", () => {
+    const result = compileOk(
+      "int first(int a[]) { return a[0]; } int main() { int b[2]; b[0] = 3; return first(b); }",
+    );
+    expect(typeName(result.parse.program.functions[0].params[0].type)).toBe("int*");
+  });
+
+  it("assigns through a dereference and through an index", () => {
+    const stmts = compileOk(
+      "int main() { int a[2]; int *p = a; *p = 1; a[1] = 2; return a[0] + a[1]; }",
+    ).parse.program.functions[0].body.stmts;
+    const deref = stmts[2];
+    const index = stmts[3];
+    if (deref.kind !== "ExprStmt" || deref.expr.kind !== "Assign") throw new Error("no");
+    if (index.kind !== "ExprStmt" || index.expr.kind !== "Assign") throw new Error("no");
+    expect(deref.expr.target.kind).toBe("Deref");
+    expect(index.expr.target.kind).toBe("Index");
+  });
+
+  it("refuses to assign to something that is not a place", () => {
+    expect(failure("int main() { int x; x + 1 = 2; return x; }").message).toContain(
+      "cannot be assigned to",
+    );
+  });
+
+  // ------------------------------------------------------------------- typing
+
+  it("types &x as a pointer to x's type", () => {
+    expect(typeOfReturn("int main() { char c = 'a'; char *p = &c; return *p; }"))
+      .toBe("char");
+  });
+
+  it("decays an array to a pointer when it is used as a value", () => {
+    expect(typeOfReturn("int main() { int a[3]; a[0] = 1; int *p = a; return *p; }"))
+      .toBe("int");
+  });
+
+  it("keeps pointer arithmetic pointer-typed", () => {
+    expect(typeOfReturn("int main() { int a[3]; a[2] = 9; int *p = a; return *(p + 2); }"))
+      .toBe("int");
+  });
+
+  it("rejects dereferencing something that is not a pointer", () => {
+    expect(failure("int main() { int x = 1; return *x; }").message).toContain(
+      "cannot dereference",
+    );
+  });
+
+  it("rejects taking the address of a value that has no home", () => {
+    expect(failure("int main() { return *&1; }").message).toContain(
+      "no address to take",
+    );
+  });
+
+  it("rejects mixing a pointer and an integer", () => {
+    expect(
+      failure("int main() { int x; int *p = &x; return p; }").message,
+    ).toContain("cannot put");
+  });
+
+  it("rejects assigning to a whole array", () => {
+    expect(
+      failure("int main() { int a[2]; int b[2]; a = b; return 0; }").message,
+    ).toContain("array cannot be assigned");
+  });
+
+  it("names what is out of subset instead of guessing", () => {
+    expect(failure("int main() { int a[2]; int b[2]; return &a - &b; }").hint ?? "")
+      .toBeTruthy();
+    expect(failure("int main() { int (*f)[2]; return 0; }").message).toContain(
+      "too clever",
+    );
+    expect(failure("int main() { int a[2][2]; return 0; }").message).toContain(
+      "one dimension",
+    );
+  });
+
+  // -------------------------------------------------------------------- sizes
+
+  it("gives an array its whole size in the frame, not one slot", () => {
+    const result = compileOk("int main() { int a[5]; a[0] = 1; return a[0]; }");
+    const array = result.semantics.symbols.find((symbol) => symbol.name === "a");
+    expect(array?.slot).toBe(-20);
+    expect(result.semantics.frames.main).toBe(20);
+  });
+
+  it("packs a char into one byte and aligns a pointer to eight", () => {
+    const result = compileOk(
+      "int main() { char c = 'x'; int *p; p = 0; return c; }",
+    );
+    const slots = Object.fromEntries(
+      result.semantics.symbols
+        .filter((symbol) => symbol.role !== "function")
+        .map((symbol) => [symbol.name, symbol.slot]),
+    );
+    expect(slots.c).toBe(-1);
+    // The pointer cannot start at -9; it is rounded out to its own alignment.
+    expect(slots.p).toBe(-16);
+  });
+
+  // ---------------------------------------------------------------- lowering
+
+  it("lowers a[i] into a visible multiply and add", () => {
+    const ir = inMain("int main() { int a[3]; int i = 1; return a[i]; }");
+    expect(ir).toContain("t0 = &a");
+    expect(ir.some((line) => /t\d = i \* 4/.test(line))).toBe(true);
+    expect(ir.some((line) => /t\d = t\d \+ t\d/.test(line))).toBe(true);
+    expect(ir.some((line) => /t\d = \*t\d/.test(line))).toBe(true);
+  });
+
+  it("scales pointer arithmetic by the element size, not by one", () => {
+    const ints = inMain("int main() { int a[3]; int *p = a; return *(p + 1); }");
+    expect(ints.some((line) => line.includes("* 4"))).toBe(true);
+
+    const chars = inMain("int main() { char a[3]; char *p = a; return *(p + 1); }");
+    expect(chars.some((line) => line.includes("* 4"))).toBe(false);
+  });
+
+  it("stores through a computed address rather than into a name", () => {
+    const ir = inMain("int main() { int a[2]; a[0] = 7; return a[0]; }");
+    expect(ir.some((line) => /^\*t\d = 7$/.test(line))).toBe(true);
+  });
+
+  it("passes an array by address, copying nothing", () => {
+    const ir = inMain(
+      "int first(int *p) { return *p; } int main() { int a[2]; a[0] = 1; return first(a); }",
+    );
+    expect(ir).toContain("t0 = &a");
+    expect(ir.some((line) => /call first\(t\d\)/.test(line))).toBe(true);
+  });
+
+  // ---------------------------------------------------------------- assembly
+
+  it("takes an address with lea, which reads nothing", () => {
+    const asm = compileOk("int main() { int x = 1; int *p = &x; return *p; }")
+      .codegen.lines.map((line) => line.text);
+    expect(asm).toContain("lea rax, [rbp-4]");
+  });
+
+  it("moves addresses in 64-bit registers and ints in 32-bit ones", () => {
+    const asm = compileOk("int main() { int x = 1; int *p = &x; return *p; }")
+      .codegen.lines.map((line) => line.text);
+    expect(asm.some((line) => /^mov rax, \[rbp-\d+\]$/.test(line))).toBe(true);
+    expect(asm).toContain("mov eax, [rax]");
+  });
+
+  it("sign-extends a char rather than reading four bytes from a one-byte slot", () => {
+    const asm = compileOk("int main() { char c = 'a'; int n = c; return n; }")
+      .codegen.lines.map((line) => line.text);
+    expect(asm.some((line) => line.startsWith("movsx eax, byte ptr"))).toBe(true);
+  });
+
+  it("writes a char back one byte at a time", () => {
+    const asm = compileOk("int main() { char a[2]; a[0] = 'x'; return a[0]; }")
+      .codegen.lines.map((line) => line.text);
+    expect(asm.some((line) => /^mov byte ptr \[rax\], \d+$/.test(line))).toBe(true);
   });
 });

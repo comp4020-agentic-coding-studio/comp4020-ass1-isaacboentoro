@@ -19,13 +19,18 @@ something I designed — it is what the trace shows.
 
 ## What it changed about me
 
-I've been treating tests as proof that code works. Twice this week they were
-better than that: an assertion about stack-frame size found a design error, not a
-typo, and I moved a responsibility between stages rather than editing the number.
+I had been treating tests as proof that code works. This week they were better
+than that twice over. An assertion about stack-frame size found a design error
+rather than a typo, and I moved a responsibility between stages instead of editing
+the number. Then 139 green tests told me the page worked while the phone viewport
+rendered nothing at all — which is when I stopped patching and spent an hour
+building a sensor that drives a real browser.
 
-The sharper lesson was that a green suite is not a green page. 139 tests passed
-while the phone viewport rendered nothing at all. What fixed that permanently was
-not the one-line patch but an hour spent building a sensor that drives a real
-browser and fails on things I would never think to check by hand. I want to be the
-developer who reaches for a new instrument when the existing ones cannot see the
-problem, rather than the one who squints harder at the same dials.
+The part that changed how I think came last. I cut pointers and arrays on day one
+because I could not verify them in the time I had. With three days left I added
+them, but only after writing a check that assembles the output with gcc and runs
+it, so correctness stopped being something I argued for and became something I
+measured. The instrument did not only catch bugs; it changed what I could afford
+to attempt. I want to be the developer who builds a new instrument when the
+existing ones cannot see the problem, rather than the one who squints harder at
+the same dials.

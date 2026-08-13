@@ -1,6 +1,7 @@
 import { formatAsm } from "../compiler/codegen";
 import { formatInstr } from "../compiler/ir";
 import type { AstNode, Compilation, StageId } from "../compiler/types";
+import { typeName } from "../compiler/ctypes";
 import { STAGES, childrenOf, labelOf } from "../compiler/types";
 import { type StageTrace, tracesOf } from "./reveal";
 
@@ -288,7 +289,7 @@ function buildSemantics(
   for (const symbol of symbols) {
     const row = el("tr", "symbol");
     row.append(el("td", "symbol-name", symbol.name));
-    row.append(el("td", undefined, symbol.type));
+    row.append(el("td", undefined, typeName(symbol.type)));
     row.append(el("td", undefined, symbol.role));
     row.append(
       el(
