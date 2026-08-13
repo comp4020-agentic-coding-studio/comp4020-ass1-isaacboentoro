@@ -267,6 +267,32 @@ async function main(): Promise<void> {
       );
     }
 
+    // Nothing below a playing stage may move. Reserved heights make each pane a
+    // fixed box that content grows inside; without them the page slid down a step
+    // at a time and felt like jitter.
+    // Compare a section's height at its FIRST step against its last: comparing
+    // two fully-revealed states measures nothing, which an earlier version of
+    // this check did while passing happily.
+    const sectionHeight = (stage: string) =>
+      page.$eval(`#stage-${stage}`, (node) =>
+        Math.round(node.getBoundingClientRect().height),
+      );
+    const jitter: string[] = [];
+    for (const stage of STAGES) {
+      const max = await page.$eval(`#scrub-${stage}`, (el) =>
+        Number((el as HTMLInputElement).max),
+      );
+      const seen = new Set<number>();
+      for (const cursor of [0, Math.floor(max / 2), max]) {
+        await scrubTo(page, stage, cursor);
+        seen.add(await sectionHeight(stage));
+      }
+      if (seen.size > 1) jitter.push(`${stage} ${[...seen].join("/")}px`);
+    }
+    if (jitter.length > 0) {
+      note(`sections resized while playing: ${jitter.join(", ")}`);
+    }
+
     // Independence: moving one stage must not move any other.
     for (const stage of STAGES) await scrubTo(page, stage, 1);
     const before = await Promise.all(STAGES.map((stage) => shownIn(page, stage)));
@@ -382,7 +408,7 @@ async function main(): Promise<void> {
       `${viewport.name} ${viewport.width}x${viewport.height}: ${sections.length} sections, ` +
         `revealed ${STAGES.map((s) => `${s}=${counts[s].start}->${counts[s].end}`).join(" ")}, ` +
         `tree grew ${grewFrom}->${grewMid}->${grewTo}px, ` +
-        `reduced motion honoured, ` +
+        `reduced motion honoured, sections hold their height, ` +
         `independent, keyboard ok, cursors survive resize, ` +
         `${overflow <= 1 ? "no" : `${overflow}px`} overflow, ` +
         `${violations.length === 0 ? "no serious axe violations" : `${violations.length} axe violation(s)`}, ` +

@@ -48,6 +48,18 @@ these, and each one is here because breaking it cost me something.
 - **"It grows" is a claim about layout, so test layout.** Counting classes cannot
   see a fixed skeleton. `pnpm shoot` measures the parse tree's height at three
   cursors and fails unless it increases.
+- **A pane's box never changes size while it plays.** `reserveHeights()` in
+  `app.ts` measures each pane's fully-revealed height once per compile and pins it
+  as `min-height`, capped by the CSS `max-height`. Content grows inside a box that
+  does not move; without it, the tree pushed everything below it down by 223px over
+  a play and the whole page felt like jitter. Anything with per-step text — the
+  commentary, the step counter — gets a reserved size in CSS for the same reason.
+  `pnpm shoot` fails if any stage section reports two different heights.
+- **Prove a new check can fail before trusting it.** The first version of the
+  jitter check compared two fully-revealed states, so it measured nothing and
+  passed on the broken build. Comment the fix out, watch the check go red, put it
+  back. A check that cannot fail is worse than no check, because it reads as
+  evidence.
 - **A step whose span covers most of the file highlights nothing.** Painting every
   line yellow is noise. Where a step really is about the whole file, the
   commentary carries it — and prefer a narrow span in the first place: the

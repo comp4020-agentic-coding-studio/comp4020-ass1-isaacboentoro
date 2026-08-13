@@ -90,6 +90,7 @@ export function start(): void {
     compilation = compile(source.value);
     built = buildPanes(compilation, bodies());
     highlightEditor(null);
+    reserveHeights();
 
     for (const player of players) {
       const steps = built.traces[player.stage].steps.length;
@@ -105,6 +106,38 @@ export function start(): void {
     const map = {} as Record<StageId, HTMLElement>;
     for (const player of players) map[player.stage] = player.body;
     return map;
+  }
+
+  /**
+   * Reserve each stage's finished height once per compile.
+   *
+   * Without this, a pane grows as it plays and everything below it slides down a
+   * step at a time — the tree is the worst offender, but any pane that reveals a
+   * taller artefact does it. Measuring the fully-revealed height and pinning it as
+   * `min-height` means content still grows inside the box while the box itself
+   * never moves. Capped by the CSS `max-height`, so a long program still scrolls
+   * rather than reserving a screenful.
+   *
+   * This is the one place that reads layout back out of the DOM, and it is a
+   * measurement, not a layout decision — the sizes still come from CSS.
+   */
+  function reserveHeights(): void {
+    if (!built) return;
+    for (const player of players) {
+      // Reveal everything to measure the end state. render() puts the real
+      // cursor state back immediately afterwards, and because nothing is removed
+      // here, the appear animations do not all fire at once on load.
+      for (const { el } of built.reveals[player.stage]) el.classList.add("is-shown");
+
+      player.body.style.minHeight = "";
+      const style = window.getComputedStyle(player.body);
+      const cap = Number.parseFloat(style.maxHeight);
+      // scrollHeight excludes borders, which min-height on a border-box element
+      // has to cover.
+      const chrome = player.body.offsetHeight - player.body.clientHeight;
+      const needed = player.body.scrollHeight + chrome;
+      player.body.style.minHeight = `${Number.isFinite(cap) ? Math.min(needed, cap) : needed}px`;
+    }
   }
 
   function setCursor(player: StagePlayer, next: number): void {

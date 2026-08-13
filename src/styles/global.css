@@ -350,13 +350,19 @@ mark {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.1em;
   margin: 0;
+
+  /* Reserved so the slider beside it does not resize when the count gains a
+     digit. Tabular figures alone do not cover 9 -> 10. */
+  min-width: 12ch;
+  text-align: right;
   white-space: nowrap;
 }
 
 .player-commentary {
   border-top: var(--rule) solid var(--dimmer);
+  height: 7rem;
   margin-top: 1rem;
-  min-height: 4.25rem;
+  overflow-y: auto;
   padding-top: 0.75rem;
 }
 
@@ -689,6 +695,11 @@ noscript p {
 
 /* Narrow: the slider gets its own line and enough height to drag with a thumb. */
 @media (width <= 34rem) {
+  /* Narrower lines wrap more, so the commentary needs more reserved room. */
+  .player-commentary {
+    height: 10rem;
+  }
+
   .player-row {
     display: grid;
     gap: 0.6rem 1rem;
