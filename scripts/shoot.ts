@@ -248,6 +248,25 @@ async function main(): Promise<void> {
       await scrubTo(page, stage, 0);
     }
 
+    // "The tree grows" is a claim about layout, not about classes: the parse pane
+    // must get taller as it plays, which only holds if unbuilt structure takes no
+    // space at all.
+    const parseMax = await page.$eval("#scrub-parse", (el) =>
+      Number((el as HTMLInputElement).max),
+    );
+    const heightAt = async (cursor: number) => {
+      await scrubTo(page, "parse", cursor);
+      return page.$eval("#pane-parse .tree", (el) => (el as HTMLElement).scrollHeight);
+    };
+    const grewFrom = await heightAt(0);
+    const grewMid = await heightAt(Math.floor(parseMax / 2));
+    const grewTo = await heightAt(parseMax);
+    if (!(grewFrom < grewMid && grewMid < grewTo)) {
+      note(
+        `the parse tree did not grow: ${grewFrom}px at step 1, ${grewMid}px mid, ${grewTo}px at the end`,
+      );
+    }
+
     // Independence: moving one stage must not move any other.
     for (const stage of STAGES) await scrubTo(page, stage, 1);
     const before = await Promise.all(STAGES.map((stage) => shownIn(page, stage)));
@@ -336,6 +355,7 @@ async function main(): Promise<void> {
     report.push(
       `${viewport.name} ${viewport.width}x${viewport.height}: ${sections.length} sections, ` +
         `revealed ${STAGES.map((s) => `${s}=${counts[s].start}->${counts[s].end}`).join(" ")}, ` +
+        `tree grew ${grewFrom}->${grewMid}->${grewTo}px, ` +
         `independent, keyboard ok, cursors survive resize, ` +
         `${overflow <= 1 ? "no" : `${overflow}px`} overflow, ` +
         `${violations.length === 0 ? "no serious axe violations" : `${violations.length} axe violation(s)`}, ` +

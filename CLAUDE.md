@@ -39,6 +39,15 @@ these, and each one is here because breaking it cost me something.
   the space reserved so nothing jumps, and it keeps text that has not been
   produced yet out of the accessibility tree. Dimming instead left 53 elements of
   unreadable text on the page as far as axe was concerned, and axe was right.
+- **Two hiding rules, on purpose.** `data-reveal` reserves an artefact's space
+  (`visibility`), which is what stops a listing jumping line by line.
+  `data-grow` collapses a container entirely (`display: none`) until the earliest
+  step anywhere inside it. The tree uses growth so it grows instead of filling in
+  a skeleton; the listings use reservation. A container stamped `data-grow` is
+  structure, so it never wears the current-step marker.
+- **"It grows" is a claim about layout, so test layout.** Counting classes cannot
+  see a fixed skeleton. `pnpm shoot` measures the parse tree's height at three
+  cursors and fails unless it increases.
 - **A step whose span covers most of the file highlights nothing.** Painting every
   line yellow is noise. Where a step really is about the whole file, the
   commentary carries it — and prefer a narrow span in the first place: the

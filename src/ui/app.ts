@@ -122,7 +122,12 @@ export function start(): void {
 
     for (const { el, step: at } of built.reveals[player.stage]) {
       el.classList.toggle("is-shown", at <= player.cursor);
-      el.classList.toggle("is-current", at === player.cursor);
+      // Only artefacts carry the current-step marker; containers stamped with
+      // `data-grow` are structure, and outlining them would be noise.
+      el.classList.toggle(
+        "is-current",
+        at === player.cursor && el.dataset.reveal !== undefined,
+      );
     }
 
     player.position.textContent =

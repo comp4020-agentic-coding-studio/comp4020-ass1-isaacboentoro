@@ -398,6 +398,18 @@ mark {
   outline-offset: 2px;
 }
 
+/*
+ * Structure that does not exist yet takes no space at all, so the tree grows
+ * instead of filling in a skeleton that was there from the first step.
+ */
+[data-grow] {
+  display: none;
+}
+
+[data-grow].is-shown {
+  display: block;
+}
+
 .diagnostic {
   border: var(--rule) solid var(--bad);
   margin-bottom: 1rem;
@@ -506,6 +518,16 @@ mark {
 
 .tree-node {
   margin: 0.15rem 0;
+}
+
+/* In the tree, an unbuilt node is absent rather than reserved — otherwise a
+   parent built after its children leaves a blank line waiting for itself. */
+.tree [data-reveal] {
+  display: none;
+}
+
+.tree [data-reveal].is-shown {
+  display: inline-flex;
 }
 
 .tree-label {

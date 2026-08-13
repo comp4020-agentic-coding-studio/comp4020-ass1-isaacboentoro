@@ -56,6 +56,18 @@ export function buildPanes(
       return node;
     };
 
+    /**
+     * Structure that should not exist yet at all. `reveal` reserves an
+     * artefact's space so lists do not jump; `grow` collapses a container until
+     * something inside it has been produced, which is what lets the tree grow
+     * rather than fill in a skeleton that was there from the start.
+     */
+    const grow = (node: HTMLElement, step: number): HTMLElement => {
+      node.dataset.grow = String(step);
+      stageReveals.push({ el: node, step });
+      return node;
+    };
+
     const pane = panes[stage];
     pane.replaceChildren();
     const body = el("div", "pane-body");
@@ -88,7 +100,7 @@ export function buildPanes(
         buildScan(compilation, body, reveal);
         break;
       case "parse":
-        buildParse(compilation, body, reveal);
+        buildParse(compilation, body, reveal, grow, (id) => at.get(id));
         break;
       case "semantics":
         buildSemantics(compilation, body, reveal);
@@ -200,6 +212,8 @@ function buildParse(
   compilation: Compilation,
   body: HTMLElement,
   reveal: Reveals,
+  grow: (node: HTMLElement, step: number) => HTMLElement,
+  stepOf: (id: string) => number | undefined,
 ): void {
   const { program } = compilation.parse;
   if (program.functions.length === 0) {
@@ -207,25 +221,46 @@ function buildParse(
     return;
   }
 
-  // The label is what gets revealed, not the list item — an expression's parent
-  // is built after its children, and hiding the item would hide them too.
-  const buildNode = (node: AstNode): HTMLElement => {
+  /**
+   * The tree grows rather than filling in. A node's label is revealed at the step
+   * that built it, and every container collapses until the earliest step anywhere
+   * inside it — so a branch appears when its first leaf does and the indentation
+   * arrives with the nodes instead of waiting for them.
+   *
+   * Expressions are built bottom-up, so a parent's label lands after its children:
+   * the item has to be on screen before its own label is.
+   */
+  const buildNode = (node: AstNode): { el: HTMLElement; from: number } => {
     const item = el("li", "tree-node");
     const label = el("span", `tree-label tree-${node.kind}`, labelOf(node));
     label.append(el("span", "tree-kind", node.kind));
-    item.append(reveal(label, node.id));
+    reveal(label, node.id);
+    item.append(label);
+
+    const own = stepOf(node.id) ?? 0;
+    let from = own;
 
     const children = childrenOf(node);
     if (children.length > 0) {
       const list = el("ul", "tree-children");
-      for (const child of children) list.append(buildNode(child));
+      let earliest = Number.POSITIVE_INFINITY;
+      for (const child of children) {
+        const built = buildNode(child);
+        list.append(built.el);
+        earliest = Math.min(earliest, built.from);
+      }
+      const listFrom = Number.isFinite(earliest) ? earliest : own;
+      grow(list, listFrom);
+      from = Math.min(from, listFrom);
       item.append(list);
     }
-    return item;
+
+    grow(item, from);
+    return { el: item, from };
   };
 
   const root = el("ul", "tree");
-  root.append(buildNode(program));
+  root.append(buildNode(program).el);
   body.append(root);
 }
 

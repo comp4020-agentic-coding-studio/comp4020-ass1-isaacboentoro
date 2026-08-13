@@ -241,6 +241,35 @@ describe("the page, driven", () => {
     expect(marked?.length).toBeGreaterThan(0);
   });
 
+  it("grows the parse tree instead of filling in a fixed skeleton", () => {
+    const parse = document.getElementById("scrub-parse") as HTMLInputElement;
+    const nodesShown = () =>
+      document.querySelectorAll("#pane-parse .tree-node.is-shown").length;
+    const branchesShown = () =>
+      document.querySelectorAll("#pane-parse .tree-children.is-shown").length;
+
+    scrubTo("parse", 0);
+    const first = { nodes: nodesShown(), branches: branchesShown() };
+    scrubTo("parse", Number(parse.max));
+    const last = { nodes: nodesShown(), branches: branchesShown() };
+
+    expect(first.nodes).toBeGreaterThan(0);
+    expect(first.nodes).toBeLessThan(last.nodes);
+    // Indentation arrives with the nodes: a branch only exists once something in
+    // it has been built.
+    expect(first.branches).toBeLessThan(last.branches);
+  });
+
+  it("never leaves a tree node on screen without its branch above it", () => {
+    scrubTo("parse", 3);
+    for (const node of document.querySelectorAll("#pane-parse .tree-node.is-shown")) {
+      const branch = node.parentElement;
+      if (branch?.classList.contains("tree-children")) {
+        expect(branch.classList.contains("is-shown")).toBe(true);
+      }
+    }
+  });
+
   it("does not highlight the whole file for a step that is about the whole file", () => {
     // "lay out main's frame" spans the function; marking every line of a short
     // program is noise, so above 60% coverage the commentary carries it alone.
