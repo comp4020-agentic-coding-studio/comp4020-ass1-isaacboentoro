@@ -20,6 +20,39 @@ you plan or build, and see `spec/README.md` for how the checks relate to them.
 
 When writing paragraphs or text, try to keep it short and boilerplate so I can expand on it instead.
 
+## This prototype: rules the work has to hold to
+
+The site is one interactive explainer of C compilation. Its whole design rests on
+these, and each one is here because breaking it cost me something.
+
+- **Every stage emits `Step[]`, not just a final artefact.** A stage that returns
+  only its output cannot be scrubbed through and cannot explain itself. Steps are
+  emitted as the work happens, never reconstructed afterwards.
+- **The page is a pure function of one integer.** All visible state derives from
+  the cursor. Panes are built once per compile and then only have classes
+  toggled; if rendering ever needs to know what the previous cursor was, the
+  design has gone wrong.
+- **Layout in CSS, state in JavaScript.** Never resize or reflow by script. The
+  marker resizes mid-interaction, and the cursor has to survive it.
+- **Every artefact's span points into the original source.** Not the preprocessed
+  text, not an intermediate. Macro-generated text resolves to its call site.
+  `spec/compiler.test.ts` asserts this; it is the contract the highlight rests on.
+- **No stage throws. Stages return a `Diagnostic`.** Bad input is content, not a
+  crash: the failing stage explains itself and later panes say they were never
+  reached.
+- **Out-of-subset C gets a named error, never a crash and never silence.** If the
+  answer is "this explainer does not do pointers", say that in the diagnostic.
+- **Never `innerHTML` in `src/ui/`.** The source text is visitor input. Build
+  nodes and set `textContent`.
+- **Simplifications are stated on the page, not just in comments.** No register
+  allocator, no assembler, no linker, no pointers. The `#limits` section is part
+  of the deliverable and `spec/page.test.ts` checks it is still there.
+- **Presets are load-bearing.** Nobody types C on a 390px phone, so every preset
+  must compile (except the one deliberately named "A mistake"), and
+  `spec/interaction.test.ts` compiles all of them.
+- **Don't parenthesise macro arguments.** Textual substitution is the behaviour
+  and the trap is the teaching point. There is a test pinning this.
+
 ## How to work in here
 
 - Keep the dev server running (`pnpm dev`) so you see changes as you make them.
@@ -30,6 +63,15 @@ When writing paragraphs or text, try to keep it short and boilerplate so I can e
   `pnpm dlx linkinator ./dist --silent --skip "^https?://(?!localhost|127)"`
   locally against a fresh `pnpm build` for the links check without waiting for
   CI.
+- **Run `pnpm shoot` before believing the page works.** It builds nothing itself,
+  so `pnpm build` first. It serves `dist/`, drives real Chromium at 1920×1080 and
+  390×844, and fails on: any console or page error, a scrubber that changes
+  nothing, a missing source highlight, arrow/Home keys not moving the cursor, the
+  cursor not surviving a resize, the wrong number of visible panes per viewport, a
+  failing program that shows no diagnostic, any serious or critical axe violation,
+  and a gzipped bundle over 60kB. Screenshots land in `.screens/` — look at them.
+  This is local-only (it needs a system Chromium), so it is deliberately not part
+  of `pnpm check`, which has to keep working in CI.
 - To see what the page actually looks like rather than what you assume it looks
   like, open it in a browser (the `agent-browser` CLI, documented on
   [the course site](https://comp.anu.edu.au/courses/comp4020-agentic-coding-studio/topics/backpressure/#agent-browser-the-rendered-page-as-ground-truth),

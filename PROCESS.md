@@ -1,83 +1,60 @@
 # Process overview
 
-<!-- TEMPLATE: this file is a shape to fill in, not a form. Replace everything
-     in it with your own overview, and delete this comment — `pnpm
-     check:evidence` will remind you if it's still here. -->
-
-A reading-guide to how the work came together --- a map to your process, not an
-essay about it. Markers read this file and follow its citations; they don't
-trawl the repo for evidence you didn't point at, so if a moment mattered, cite
-it.
-
-This file is the shape; the course site's
-[assessment page](https://comp.anu.edu.au/courses/comp4020-agentic-coding-studio/topics/assessment/#what-you-submit)
-is the requirement, and each brief adds its own word count and moment count.
-
 ## What I built
 
-One paragraph: the thing, and the idea behind it.
+A one-page interactive explainer of what compiling C actually does. You type C
+into an editor and one slider walks the whole compilation, step by step, through
+six panes: preprocessing, scanning, parsing, semantic analysis, lowering to
+three-address IR, and x86-64 assembly. The compiler is mine, written in
+TypeScript and running in the visitor's browser — no wasm, no server. The idea
+the page argues for is that compiling is not one translation but a sequence of
+small rewrites, each throwing away something the last one needed.
 
 ## The moments that mattered
 
-Three or four for an assignment; fewer is fine for a weekly prototype. Keep the
-list short so each moment has room to do all four jobs:
+**Cutting the scope before writing a line.** My plan had pointers and arrays in
+the C subset. Working out what that cost — C's declarator grammar, array-to-pointer
+decay, lvalue-versus-rvalue in the IR — against a rubric that is 45% process and
+20% artefact, I dropped them. The obvious move was to keep them and hope; the call
+I made was that a smaller compiler that is *right*, plus a day spent on the
+interaction, scores better than a large one that half-works. To stop that becoming
+a quiet omission I made it visible in three places: a `#limits` section on the
+page, a rule in `CLAUDE.md`, and a test that fails if the caveats leave the page
+([`faf738c`](https://github.com/comp4020-agentic-coding-studio/comp4020-ass1-isaacboentoro/commit/faf738c)).
 
-1. **what happened** --- the problem, or the thing the agent got wrong
-2. **what you did instead of the obvious thing** --- the call you made, and why
-   it beat the obvious one
-3. **how you knew it was right** --- the check you ran, the viewport you looked
-   at, what you read before accepting the diff
-4. **the citation** --- a commit or commit range, a `CLAUDE.md` change, a check
-   that went from red to green, a prompt paired with the commit it produced
+**A test that found a design error, not a typo.** Writing the frame-layout test I
+expected `sub rsp, 16` and got 32. The analyser was aligning the frame to 16
+bytes, then codegen added the temporaries lowering had invented and aligned again.
+The easy fix was to change the assertion. Instead I moved the responsibility: the
+analyser now reports the bytes for the names you wrote, and codegen — the only
+stage that knows how many temporaries exist — sizes and aligns once
+([`ed9ed23`](https://github.com/comp4020-agentic-coding-studio/comp4020-ass1-isaacboentoro/commit/ed9ed23)).
+I knew it had taken because the same commit's tests pin both halves, and the
+number in the assembly is now derivable from the pane above it.
 
-Jobs 2 and 3 are the ones the repo can't tell a reader on its own, so they're
-where the marks are. The strongest moments are the ones where a correction
-landed in the **harness** rather than in another prompt --- a rule added to
-`CLAUDE.md`, a check wired up, an attempt thrown away: re-prompting until it
-passes is the routine case, and changing what the agent works against is the
-skilled one.
+**Building a sensor instead of re-prompting.** 139 passing tests said the page
+worked. It did not: at 390px no pane rendered at all. Rather than fix it and move
+on, I wrote `pnpm shoot` — it serves `dist/`, drives real Chromium at both marking
+viewports, and fails on console errors, a scrubber that reveals nothing, a missing
+highlight, or the wrong number of visible panes
+([`565478c`](https://github.com/comp4020-agentic-coding-studio/comp4020-ass1-isaacboentoro/commit/565478c)).
+It found the bug (`is-active` was going on the scrolling body, not the section the
+phone layout hides) and a favicon 404 riding along unnoticed. I then extended it
+to the things the course CI does not measure — axe-core, arrow and Home keys, the
+cursor surviving a resize, an 18.7kB gzipped budget — and axe immediately found a
+real defect: the pane bodies scroll and had no keyboard route in
+([`a29a324`](https://github.com/comp4020-agentic-coding-studio/comp4020-ass1-isaacboentoro/commit/a29a324)).
 
-Cite each moment as a link whose text is the commit hash or range and whose
-target is this repo's commit or compare URL, so a reader clicks straight to the
-evidence:
+**Throwing away my own safety hack.** A preset would not compile: `DOUBLE(SIZE)`
+left `SIZE` behind, because expansion output was never rescanned. Fixing that
+surfaced a worse decision underneath — I had been wrapping macro arguments in
+parentheses "for safety", which quietly erased the classic macro precedence trap
+this page exists to show. Substitution is now textual, as C's is, and a test pins
+`TWICE(1) * 3` becoming `1 + 1 * 3`
+([`faf738c`](https://github.com/comp4020-agentic-coding-studio/comp4020-ass1-isaacboentoro/commit/faf738c)).
 
-- one commit: [`a1b2c3d`](https://github.com/YOUR-ORG/YOUR-REPO/commit/a1b2c3d)
-- a range:
-  [`a1b2c3d...e4f5a6b`](https://github.com/YOUR-ORG/YOUR-REPO/compare/a1b2c3d...e4f5a6b)
+## Where to look
 
-To pair a prompt with the commit it produced, quote the prompt (curated, not a
-full transcript) next to the citation:
-
-> the prompt, verbatim
-
-Screenshots are welcome where one carries the verification better than a
-sentence does. Commit the file to this repo and link it with a **relative**
-path, which is what makes it render on GitHub: `![alt text](docs/before.png)`.
-Images don't count towards the word count and don't replace the citation.
-
-### A worked moment, for shape
-
-Delete this section along with the rest of the boilerplate --- it's here to show
-the four jobs in one paragraph, not to be imitated in content.
-
-> The date formatter kept coming back with `toLocaleDateString()` and no locale
-> argument, so the same build rendered differently on my machine and in CI. I'd
-> already re-prompted it twice, which fixed the line but not the habit, so the
-> third time I put the rule in `CLAUDE.md` instead
-> ([`3f9ac21`](https://github.com/YOUR-ORG/YOUR-REPO/commit/3f9ac21)) and added
-> a spec test that fails on a bare `toLocaleDateString`. That's what told me it
-> had actually taken: the test went red against the old code and green against
-> the new, and the next two features it wrote passed it without prompting
-> ([`3f9ac21...b7e0d14`](https://github.com/YOUR-ORG/YOUR-REPO/compare/3f9ac21...b7e0d14)).
-
-## Before you ship
-
-`pnpm check:evidence` verifies your citations resolve to real commits, that the
-current reflection entry is in `reflections/`, and that your `CLAUDE.md` is
-there --- before a marker ever opens the file. It checks that your map is
-traceable, not that it is good: the marker judges whether your small,
-deliberately chosen set of moments shows real judgement and reflection. A green
-check is not a substitute for that curation.
-
-Images are deliberately not checked, because whether one renders is visible the
-moment you look. Open this file on GitHub and look at it before you ship.
+[`fac83de...a29a324`](https://github.com/comp4020-agentic-coding-studio/comp4020-ass1-isaacboentoro/compare/fac83de...a29a324)
+is the build in order: compiler stages first, each committed green, then the page,
+then the spec tests, then the sensors. Nothing was committed red.

@@ -1,64 +1,55 @@
-# COMP4020 static prototype template
+# Six rewrites: what compiling C actually does
 
-A starter template for static-site prototypes in **COMP4020 / COMP8020 Agentic
-Coding Studio**. The course provisions a repo from this template for each
-deliverable --- you don't create it yourself. The `start` course skill clones it
-for you; from there, build your prototype and deploy it to GitHub Pages.
+An interactive explainer. Type C into the page and one slider walks the whole
+compilation, step by step, through six stages: preprocessing, scanning, parsing,
+semantic analysis, lowering to three-address IR, and x86-64 assembly.
 
-## CI and Pages only turn on when you ship
+The compiler is written from scratch in TypeScript and runs in the browser. There
+is no server, no wasm toolchain, and no network call — the whole thing is 18.7kB
+gzipped.
 
-Your repo starts private, and both CI jobs (`check` and `deploy`) are gated on
-it being public. While private, a push to `main` runs nothing in CI ---
-`pnpm check` (below) is your feedback loop until then. When you're ready, the
-course's `/ship` skill flips the repo public, turns on GitHub Pages, and
-dispatches the deploy for you; there's nothing to configure in the Pages
-settings yourself. From that point, every push to `main` builds and deploys, and
-the deploy step prints your live URL and checks it returns 200.
+The point it argues: compiling is not one translation. It is a sequence of small
+rewrites, and each one throws away something the last one needed.
 
-## What gets marked
+COMP4020 Assignment 1. The deployed page is the deliverable; `PROCESS.md` is the
+reading guide to how it was built, and `reflections/assignment-1.md` is the
+reflection.
 
-The deployed site is the deliverable, assessed live in Chrome at two fixed
-viewports --- see the course website's
-[assessment page](https://comp.anu.edu.au/courses/comp4020-agentic-coding-studio/topics/assessment/#marking-environment)
-for the details.
+## Layout
 
-## Quick start
+- `src/compiler/` — the compiler. One module per stage, all pure functions, no DOM.
+  Every stage returns its artefacts **and** a `Step[]` describing what it did; that
+  step trace is what the page scrubs through.
+- `src/ui/` — the page. `state`/`app` own the cursor, `panes` builds the six views,
+  `reveal` holds the one visibility rule.
+- `src/pages/index.astro`, `src/styles/global.css` — the shell and the layout.
+- `spec/` — `invariants.test.ts` (shipped, untouched), `compiler.test.ts` (stage
+  contracts), `interaction.test.ts` (the core interaction, as a property and driven
+  in jsdom), `page.test.ts` (what has to be true of the built HTML).
+- `scripts/shoot.ts` — drives real Chromium at both marking viewports.
+
+## Commands
 
 ```sh
-mise install       # supported path: install the template's Node and pnpm
 pnpm install
-pnpm dev        # local dev server
-pnpm check      # most of what CI runs (links, secrets, evidence and deploy are CI-only)
-pnpm build      # produce dist/ (what gets deployed)
-pnpm dlx linkinator ./dist --silent   # reproduce CI's links check before you push
+pnpm dev              # local dev server
+pnpm check            # typecheck, build, lint, and every test — what CI runs
+pnpm build            # produce dist/
+pnpm shoot            # build first: real Chromium at 1920x1080 and 390x844,
+                      # axe-core, keyboard, resize, bundle budget, screenshots
+pnpm check:evidence   # PROCESS.md citations, reflection, CLAUDE.md
+pnpm dlx linkinator ./dist --silent --skip "^https?://(?!localhost|127)"
 ```
 
-`mise` is the course's recommended runtime manager. If you use another manager
-or the official installers, that is fine: provide the Node and pnpm versions in
-`mise.toml`, then run the same commands. Tutor support reproduces runtime
-problems with mise.
+`CLAUDE.md` carries the rules this prototype has to hold to, and why each one is
+there.
 
-## What's here
+## The C subset
 
-- `index.html`, `styles.css`, `main.ts` --- a minimal starting site. Replace it.
-- `mise.toml` --- the tested Node and pnpm versions for this template.
-- `spec/` --- what the checks are for (`README.md`), the shipped invariants
-  (`invariants.test.ts`), and a replaceable starter test (`starter.test.ts`);
-  your own spec tests live alongside them.
-- `CLAUDE.md` --- orients your coding agent: what the checks mean and how to
-  work here. Yours to grow.
-- `PROCESS.md` --- a template for your process overview, showing the
-  cited-moment format. Replace it with your own; `pnpm check:evidence` verifies
-  your citations resolve.
-- `.github/workflows/checks.yml` --- the CI sensors that run on every push once
-  your repo is public, and the GitHub Pages deploy.
-- `.githooks/pre-commit` --- blocks any commit that contains something shaped
-  like an API key, so your COMP4020 key can't end up in a public repo. Installed
-  automatically by `pnpm install`.
+`int`, `char`, `void`; locals; arithmetic and comparison; `if`/`else`, `while`,
+`for`, `break`, `continue`; functions with parameters, calls and recursion;
+`#define` (object- and function-like) and comments.
 
-This template is SSG-agnostic: it's plain HTML/CSS/TypeScript on Vite, so you
-can add Astro, Eleventy, or any static generator later without changing how it
-deploys. TypeScript is the course default over plain JavaScript: the types are
-extra backpressure, and your agent feels it before you do.
-
-See the course site for how the checks map to each week of the course.
+Deliberately absent, and said so on the page: pointers, arrays, structs, floats,
+`#include`, the standard library, register allocation, the assembler and the
+linker.
