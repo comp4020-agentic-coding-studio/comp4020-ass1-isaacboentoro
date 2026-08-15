@@ -179,9 +179,12 @@ export function start(): void {
     const section = player.body.closest(".stage");
     section?.classList.toggle("is-empty", trace.steps.length === 0);
 
-    // Grammar rules do not appear and accumulate; only the marker moves.
+    // Grammar rules do not appear and accumulate; only the marker moves — and
+    // the list is taller than the box, so the marked rule is scrolled to.
     for (const rule of player.rules.querySelectorAll<HTMLElement>("[data-rule]")) {
-      rule.classList.toggle("is-rule", rule.dataset.rule === step?.rule);
+      const marked = rule.dataset.rule === step?.rule;
+      rule.classList.toggle("is-rule", marked);
+      if (marked) keepInView(rule, rule.parentElement);
     }
 
     highlightEcho(player, step?.consumed ?? null);
@@ -216,17 +219,27 @@ export function start(): void {
     paint(mirror, span);
   }
 
+  /**
+   * Scroll a scrolling box just enough to show one of its children. Never
+   * `scrollIntoView`, which would move the page itself and drag the reader away
+   * from the stage they are watching.
+   */
+  function keepInView(child: HTMLElement, box: HTMLElement | null): void {
+    if (!box) return;
+    const inner = box.getBoundingClientRect();
+    const outer = child.getBoundingClientRect();
+    const margin = 16;
+    if (outer.top < inner.top) {
+      box.scrollTop -= inner.top - outer.top + margin;
+    } else if (outer.bottom > inner.bottom) {
+      box.scrollTop += outer.bottom - inner.bottom + margin;
+    }
+  }
+
   /** Keep the current artefact in view without moving the page. */
   function scrollCurrentIntoView(player: StagePlayer): void {
     const current = player.body.querySelector<HTMLElement>(".is-current");
-    if (!current) return;
-    const top = current.offsetTop - player.body.offsetTop;
-    const bottom = top + current.offsetHeight;
-    if (top < player.body.scrollTop) {
-      player.body.scrollTop = Math.max(0, top - 16);
-    } else if (bottom > player.body.scrollTop + player.body.clientHeight) {
-      player.body.scrollTop = bottom - player.body.clientHeight + 16;
-    }
+    if (current) keepInView(current, player.body);
   }
 
   // ----------------------------------------------------------------- playback

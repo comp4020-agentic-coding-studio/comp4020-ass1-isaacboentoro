@@ -105,6 +105,16 @@ these, and each one is here because breaking it cost me something.
 - **`a[i]` lowers to the multiply and the add, never to one opaque step.** The
   element size is the lesson; hiding it in an addressing mode would waste the only
   stage where it is visible.
+- **What a stage reads stays on screen while it plays.** On a wide screen the
+  left column — source echo and grammar — is sticky and capped to the viewport,
+  with the rule list scrolling inside it, so the production being applied is
+  never off screen at the moment it matters. `pnpm shoot` walks every parse step
+  and fails if the marked rule leaves view.
+- **Scroll a box with rects, never `offsetTop`.** `offsetTop` is measured from the
+  nearest *positioned* ancestor, which these boxes are not, so the arithmetic
+  silently targets the wrong origin. Use `getBoundingClientRect` deltas. And never
+  `scrollIntoView`, which moves the page and drags the reader away from the stage
+  they were watching.
 - **The grammar on the page is data, and a test keeps it true.** `grammar.ts`
   holds the productions the page shows; every scan and parse step names one of
   them, and `spec/compiler.test.ts` fails if a step names a rule that does not

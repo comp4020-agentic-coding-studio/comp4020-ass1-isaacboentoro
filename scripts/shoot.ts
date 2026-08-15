@@ -97,7 +97,13 @@ async function bundleWeight(): Promise<{ total: number; detail: string }> {
   return { total, detail: parts.join(", ") };
 }
 
-type Violation = { id: string; impact: string; help: string; nodes: number };
+type Violation = {
+  id: string;
+  impact: string;
+  help: string;
+  nodes: number;
+  where: string;
+};
 
 /**
  * Nothing in the course CI measures accessibility, so this is the sensor for it.
@@ -116,7 +122,7 @@ async function axeScan(page: Page): Promise<Violation[]> {
               id: string;
               impact: string | null;
               help: string;
-              nodes: unknown[];
+              nodes: { target: string[]; failureSummary?: string }[];
             }[];
           }>;
         };
@@ -135,6 +141,10 @@ async function axeScan(page: Page): Promise<Violation[]> {
         impact: v.impact ?? "unknown",
         help: v.help,
         nodes: v.nodes.length,
+        where: v.nodes
+          .slice(0, 3)
+          .map((node) => node.target.join(" "))
+          .join(", "),
       }));
   });
 }
@@ -311,6 +321,32 @@ async function main(): Promise<void> {
       note(`only ${rulesSeen.size} grammar rule(s) ever marked while parsing`);
     }
 
+    // The complaint this was built for: while a stage plays, the rule it is
+    // applying has to be on screen. The grammar is taller than the viewport, so
+    // that needs both the sticky column and the scroll-into-view to be working.
+    await page.$eval("#stage-parse", (node) => {
+      node.scrollIntoView({ block: "start" });
+    });
+    let offScreen = 0;
+    for (let cursor = 0; cursor <= parseSteps; cursor += 1) {
+      await scrubTo(page, "parse", cursor);
+      const visible = await page.$eval("#rules-parse", (container) => {
+        const marked = container.querySelector(".rule.is-rule");
+        if (!marked) return true;
+        const rule = marked.getBoundingClientRect();
+        const list = marked.parentElement?.getBoundingClientRect();
+        if (!list) return false;
+        // Inside its own scrolling box, and that box inside the viewport.
+        const inList = rule.top >= list.top - 1 && rule.bottom <= list.bottom + 1;
+        const onScreen = list.top < window.innerHeight && list.bottom > 0;
+        return inList && onScreen;
+      });
+      if (!visible) offScreen += 1;
+    }
+    if (offScreen > 0) {
+      note(`the marked grammar rule was out of view at ${offScreen} step(s)`);
+    }
+
     // Independence: moving one stage must not move any other.
     for (const stage of STAGES) await scrubTo(page, stage, 1);
     const before = await Promise.all(STAGES.map((stage) => shownIn(page, stage)));
@@ -417,7 +453,7 @@ async function main(): Promise<void> {
     const violations = await axeScan(page);
     for (const violation of violations) {
       note(
-        `axe ${violation.impact}: ${violation.id} on ${violation.nodes} node(s) — ${violation.help}`,
+        `axe ${violation.impact}: ${violation.id} on ${violation.nodes} node(s) at ${violation.where} — ${violation.help}`,
       );
     }
 
@@ -428,7 +464,7 @@ async function main(): Promise<void> {
       `${viewport.name} ${viewport.width}x${viewport.height}: ${sections.length} sections, ` +
         `revealed ${STAGES.map((s) => `${s}=${counts[s].start}->${counts[s].end}`).join(" ")}, ` +
         `tree grew ${grewFrom}->${grewMid}->${grewTo}px, ` +
-        `${rulesSeen.size} grammar rules marked, ` +
+        `${rulesSeen.size} grammar rules marked and always in view, ` +
         `reduced motion honoured, sections hold their height, ` +
         `independent, keyboard ok, cursors survive resize, ` +
         `${overflow <= 1 ? "no" : `${overflow}px`} overflow, ` +

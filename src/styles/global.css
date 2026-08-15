@@ -402,7 +402,11 @@ mark {
 /* ------------------------------------------------------------------ grammar */
 
 .rules {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
   margin-top: 1.25rem;
+  min-height: 0;
 }
 
 .rule-list {
@@ -410,7 +414,18 @@ mark {
   display: grid;
   list-style: none;
   margin: 0;
+
+  /* Bounded everywhere so the section stays a readable length; on a wide screen
+     the sticky column takes over and it fills whatever is left of the viewport. */
+  max-height: 24rem;
+  min-height: 0;
+  overflow-y: auto;
   padding: 0;
+}
+
+.rule-list:focus-visible {
+  outline: var(--rule) solid var(--accent);
+  outline-offset: -2px;
 }
 
 .rule {
@@ -794,12 +809,38 @@ noscript p {
 /* Wide: each stage puts what it reads beside what it produced. */
 @media (width >= 62rem) {
   .stage-grid {
+    align-items: start;
     grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
   }
 
-  .echo,
   .stage-body {
     max-height: 34rem;
+  }
+
+  /*
+   * What a stage is reading — the source and the rules it follows — sticks to
+   * the viewport while its output scrolls past. The grammar is taller than a
+   * screen, so the column is capped to the viewport and the rule list scrolls
+   * inside it: the whole panel is always visible, and app.ts keeps the marked
+   * production scrolled into view within it.
+   */
+  .stage-column:first-child {
+    align-self: start;
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 3rem);
+    position: sticky;
+    top: 1.5rem;
+  }
+
+  .echo {
+    flex: 0 0 auto;
+    max-height: 15rem;
+  }
+
+  .rule-list {
+    flex: 1 1 auto;
+    max-height: none;
   }
 }
 

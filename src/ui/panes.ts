@@ -52,6 +52,11 @@ export function buildRules(stage: StageId, container: HTMLElement): void {
   );
 
   const list = el("ol", "rule-list");
+  list.tabIndex = 0;
+  list.setAttribute(
+    "aria-label",
+    stage === "scan" ? "Lexical rules" : "Grammar productions",
+  );
   for (const rule of rules) {
     const item = el("li", "rule");
     item.dataset.rule = rule.id;
