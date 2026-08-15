@@ -8,7 +8,7 @@ import type {
   Span,
 } from "./types";
 import { sizeOf } from "./ctypes";
-import { functionsOf, layoutFrame, valuesOf } from "./frames";
+import { functionsOf, layoutFrame } from "./frames";
 
 /**
  * Code generation: the list becomes instructions a machine could run.
