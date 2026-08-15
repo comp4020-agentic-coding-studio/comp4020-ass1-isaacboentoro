@@ -1,4 +1,4 @@
-# Six rewrites: what compiling C actually does
+# Compiling C, explained
 
 An interactive explainer. Type C into the page, then play any of the six stages —
 preprocessing, scanning, parsing, semantic analysis, lowering to three-address IR,
