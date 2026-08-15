@@ -51,4 +51,12 @@ export const STAGE_IO: Record<StageId, StageIO> = {
     consumes: ["three-address IR", "a symbol table and types"],
     produces: "x86-64 assembly",
   },
+  /**
+   * Not a rewrite. It runs the IR from stage five — the listing the page showed
+   * being built — rather than the assembly, which would need a processor.
+   */
+  run: {
+    consumes: ["three-address IR"],
+    produces: "a return value, and whatever it wrote to memory",
+  },
 };

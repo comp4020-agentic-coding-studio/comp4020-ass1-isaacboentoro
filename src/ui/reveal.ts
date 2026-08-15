@@ -1,5 +1,5 @@
 import type { Compilation, StageId, Step } from "../compiler/types";
-import { STAGES } from "../compiler/types";
+import { PLAYERS } from "../compiler/types";
 
 /**
  * The visibility rule, in one place and with no DOM in sight.
@@ -30,7 +30,7 @@ export function traceOf(compilation: Compilation, stage: StageId): StageTrace {
 
 export function tracesOf(compilation: Compilation): Record<StageId, StageTrace> {
   const traces = {} as Record<StageId, StageTrace>;
-  for (const stage of STAGES) traces[stage] = traceOf(compilation, stage);
+  for (const stage of PLAYERS) traces[stage] = traceOf(compilation, stage);
   return traces;
 }
 

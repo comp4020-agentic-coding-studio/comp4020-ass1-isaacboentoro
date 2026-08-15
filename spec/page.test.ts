@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { JSDOM } from "jsdom";
 import { describe, expect, it } from "vitest";
 import { STAGE_IO } from "../src/compiler/stages";
-import { STAGES, STAGE_TITLES } from "../src/compiler/types";
+import { PLAYERS, STAGES, STAGE_TITLES } from "../src/compiler/types";
 
 /**
  * What has to be true of the SHIPPED page, over and above the invariants.
@@ -54,29 +54,32 @@ describe("the shipped page", () => {
 describe("one section per stage", () => {
   it("gives each stage a section of its own, in pipeline order", () => {
     const sections = [...document.querySelectorAll(".stage")].map((node) => node.id);
-    expect(sections).toEqual(STAGES.map((stage) => `stage-${stage}`));
+    expect(sections).toEqual(PLAYERS.map((stage) => `stage-${stage}`));
   });
 
   it("titles each section with a heading", () => {
     const names = [...document.querySelectorAll(".stage .section-name")].map(
       (node) => node.textContent?.trim(),
     );
-    expect(names).toEqual(STAGES.map((stage) => STAGE_TITLES[stage]));
+    expect(names).toEqual(PLAYERS.map((stage) => STAGE_TITLES[stage]));
   });
 
-  it("numbers the stages for a sighted reader and hides it from the rest", () => {
-    const indexes = document.querySelectorAll(".stage .section-index");
-    expect(indexes).toHaveLength(STAGES.length);
-    for (const node of indexes) {
-      expect(node.getAttribute("aria-hidden")).toBe("true");
-      expect(node.textContent).toMatch(/STAGE \d+ \/ 6/);
-    }
+  it("numbers the six rewrites, and does not count running as one", () => {
+    const indexes = [...document.querySelectorAll(".stage .section-index")];
+    expect(indexes).toHaveLength(PLAYERS.length);
+    for (const node of indexes) expect(node.getAttribute("aria-hidden")).toBe("true");
+
+    const numbered = indexes.filter((node) => /STAGE \d+ \/ 6/.test(node.textContent ?? ""));
+    expect(numbered).toHaveLength(STAGES.length);
+    // Running is a section with a player, but it is not a rewrite and must not
+    // claim to be one.
+    expect(indexes.at(-1)?.textContent?.trim()).toBe("AFTERWARDS");
   });
 
   it("states what each stage consumes and produces", () => {
     // The page used to label your source as every stage's input, which is only
     // true of the preprocessor.
-    for (const stage of STAGES) {
+    for (const stage of PLAYERS) {
       const io = document
         .getElementById(`stage-${stage}`)
         ?.querySelector(".section-io")?.textContent;
@@ -101,7 +104,7 @@ describe("one section per stage", () => {
 });
 
 describe("every stage's controls are really in the markup", () => {
-  for (const stage of STAGES) {
+  for (const stage of PLAYERS) {
     describe(stage, () => {
       const section = document.getElementById(`stage-${stage}`);
 

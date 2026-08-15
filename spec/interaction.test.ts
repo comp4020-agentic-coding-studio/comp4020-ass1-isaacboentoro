@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { compile } from "../src/compiler/pipeline";
-import { STAGES } from "../src/compiler/types";
+import { PLAYERS, STAGES } from "../src/compiler/types";
 import { PRESETS } from "../src/ui/presets";
 import { clamp, traceOf, tracesOf, visibleIn } from "../src/ui/reveal";
 
@@ -138,7 +138,8 @@ describe("every preset", () => {
       const result = compile(preset.source);
       if (shouldCompile) {
         expect(result.error).toBeUndefined();
-        expect(result.reached).toHaveLength(6);
+        // Six rewrites, then running it.
+        expect(result.reached).toHaveLength(PLAYERS.length);
         expect(result.codegen.lines.length).toBeGreaterThan(5);
       } else {
         expect(result.error).toBeDefined();
@@ -178,15 +179,15 @@ describe("the page, driven", () => {
     return pane?.querySelectorAll("[data-reveal].is-shown").length ?? 0;
   }
 
-  it("builds six independent players", () => {
-    for (const stage of STAGES) {
+  it("builds a player for every section", () => {
+    for (const stage of PLAYERS) {
       expect(scrubber(stage), stage).toBeTruthy();
       expect(playButton(stage), stage).toBeTruthy();
     }
   });
 
   it("starts every stage on its last step, so each section reads as finished", () => {
-    for (const stage of STAGES) {
+    for (const stage of PLAYERS) {
       const input = scrubber(stage);
       expect(Number(input.value), stage).toBe(Number(input.max));
     }
@@ -202,11 +203,11 @@ describe("the page, driven", () => {
   });
 
   it("scrubbing one stage leaves every other stage alone", () => {
-    const before = STAGES.map((stage) => shown(stage));
+    const before = PLAYERS.map((stage) => shown(stage));
     scrubTo("parse", 0);
-    const after = STAGES.map((stage) => shown(stage));
+    const after = PLAYERS.map((stage) => shown(stage));
 
-    STAGES.forEach((stage, index) => {
+    PLAYERS.forEach((stage, index) => {
       if (stage === "parse") {
         expect(after[index], stage).toBeLessThan(before[index]);
       } else {
@@ -219,7 +220,7 @@ describe("the page, driven", () => {
     // A single codegen step emits several assembly lines, so "current" is a set,
     // not a singleton — but every element in it must belong to the same step.
     scrubTo("codegen", 4);
-    for (const stage of STAGES) {
+    for (const stage of PLAYERS) {
       const pane = document.getElementById(`pane-${stage}`);
       const current = [
         ...(pane?.querySelectorAll<HTMLElement>("[data-reveal].is-current") ?? []),

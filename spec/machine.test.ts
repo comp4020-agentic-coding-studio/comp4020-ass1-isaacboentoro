@@ -72,6 +72,16 @@ describe.skipIf(!gccAvailable)("the emitted assembly, assembled and run", () => 
       expect(ours, `${name}: ours returned ${ours}, gcc returned ${reference}`).toBe(
         reference,
       );
+
+      // Three independent implementations, one answer: our assembly through a
+      // real assembler, gcc's own build, and the interpreter that runs the IR on
+      // the page. Any two agreeing could be a shared mistake; three is evidence.
+      const interpreted = result.run?.value ?? 0;
+      expect(
+        (((interpreted % 256) + 256) % 256),
+        `${name}: the interpreter returned ${interpreted}, the binaries returned ${reference}`,
+      ).toBe(reference);
+      expect(result.run?.error?.message).toBeUndefined();
     });
   }
 });

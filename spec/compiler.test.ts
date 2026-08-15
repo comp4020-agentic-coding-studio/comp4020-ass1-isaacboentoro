@@ -1013,3 +1013,96 @@ describe("what each stage actually consumes", () => {
     }
   });
 });
+
+describe("running the IR", () => {
+  function run(source: string) {
+    const result = compile(source);
+    expect(result.error?.message).toBeUndefined();
+    return result.run!;
+  }
+
+  it("returns what the program returns", () => {
+    expect(run("int main() { return 6 * 7; }").value).toBe(42);
+  });
+
+  it("runs loops, calls and recursion", () => {
+    expect(
+      run(`int fact(int n) { if (n < 2) { return 1; } return n * fact(n - 1); }
+int main() {
+  int total = 0;
+  for (int i = 1; i <= 5; i = i + 1) { total = total + fact(i); }
+  return total;
+}`).value,
+    ).toBe(153);
+  });
+
+  it("reads and writes through pointers", () => {
+    expect(
+      run(`void swap(int *a, int *b) { int t = *a; *a = *b; *b = t; }
+int main() { int x = 7; int y = 100; swap(&x, &y); return y - x; }`).value,
+    ).toBe(-93);
+  });
+
+  it("indexes arrays at the right stride", () => {
+    expect(
+      run(`int main() {
+  char s[3];
+  s[0] = 1;
+  s[1] = 2;
+  s[2] = 3;
+  return s[0] + s[1] + s[2];
+}`).value,
+    ).toBe(6);
+  });
+
+  it("lets a write run off the end of an array, exactly as C does", () => {
+    // The point of the preset: nothing traps, nothing warns, the program keeps
+    // going. If this ever started failing, the page would be teaching a lie.
+    const result = run(`int main() {
+  int a[3];
+  a[0] = 1;
+  a[5] = 99;
+  return a[0];
+}`);
+    expect(result.error).toBeUndefined();
+    expect(result.value).toBe(1);
+  });
+
+  it("stops a program that never would, and says so", () => {
+    const result = run("int main() { while (1) { } return 0; }");
+    expect(result.error?.message).toContain("does not stop");
+    expect(result.executed).toBeGreaterThan(1000);
+  });
+
+  it("reports division by zero rather than returning nonsense", () => {
+    const result = run("int main() { int n = 0; return 10 / n; }");
+    expect(result.error?.message).toContain("divided by zero");
+  });
+
+  it("reports running out of stack", () => {
+    const result = run("int down(int n) { return down(n + 1); } int main() { return down(0); }");
+    expect(result.error?.message).toContain("stack");
+  });
+
+  it("traces one step per instruction executed", () => {
+    const result = run("int main() { int x = 1; return x + 1; }");
+    expect(result.steps.length).toBe(result.executed);
+    for (const step of result.steps) expect(step.stage).toBe("run");
+  });
+
+  it("reveals the answer with the step that produced it, not before", () => {
+    const result = run("int main() { return 3; }");
+    const last = result.steps.at(-1);
+    expect(last?.produced).toContain("run:result");
+    expect(result.effects.at(-1)?.text).toBe("main returned 3");
+  });
+
+  it("runs on the same frame layout the assembly addresses", () => {
+    // Both backends ask frames.ts, so an address in the run pane and an offset
+    // in the assembly pane describe the same byte.
+    const result = compile("int main() { int x = 5; int *p = &x; return *p; }");
+    const lea = result.codegen.lines.find((line) => line.text.startsWith("lea rax,"));
+    expect(lea?.text).toBe("lea rax, [rbp-4]");
+    expect(result.run?.value).toBe(5);
+  });
+});

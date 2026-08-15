@@ -6,6 +6,11 @@ and x86-64 assembly — and watch it do its work one step at a time. Each stage 
 its own section with its own player, showing the source it is reading beside what
 it produced.
 
+A seventh section runs the result — the three-address IR, interpreted, on the same
+frame layout the assembly addresses. Not the assembly itself: that is text, and
+there is no processor on the page. `spec/machine.test.ts` checks all three agree
+— our assembly built by gcc, gcc's own build, and the interpreter.
+
 The parser is hand-written recursive descent with precedence climbing for
 expressions — one function per grammar rule, chosen by the next token — and the
 page shows that grammar beside the tree, marking each production as it is applied.
@@ -27,7 +32,8 @@ reflection.
   Every stage returns its artefacts **and** a `Step[]` describing what it did; that
   step trace is what the page plays back. `ctypes.ts` is the only thing that
   decides how big a type is; `grammar.ts` holds the productions the page shows,
-  which every scan and parse step names.
+  which every scan and parse step names; `frames.ts` is shared by codegen and the
+  interpreter so both agree where a variable lives.
 - `src/ui/` — the page. `app` owns the six per-stage players, `panes` builds the
   six views, `reveal` holds the one visibility rule and the local step numbering.
 - `src/pages/index.astro`, `src/styles/global.css` — the shell and the layout.

@@ -8,6 +8,7 @@ import type {
   Span,
 } from "./types";
 import { sizeOf } from "./ctypes";
+import { functionsOf, layoutFrame, valuesOf } from "./frames";
 
 /**
  * Code generation: the list becomes instructions a machine could run.
@@ -200,35 +201,13 @@ export function generate(
     out.since(mark),
   );
 
-  // Split the listing into functions so each prologue knows its own temporaries.
-  const chunks: { start: number; end: number }[] = [];
-  instrs.forEach((instr, index) => {
-    if (instr.op === "enter") {
-      if (chunks.length > 0) chunks[chunks.length - 1].end = index;
-      chunks.push({ start: index, end: instrs.length });
-    }
-  });
-
-  for (const chunk of chunks) {
-    const body = instrs.slice(chunk.start, chunk.end);
+  // One chunk per function, each with its own frame. The layout is shared with
+  // the interpreter so both agree on where a name lives.
+  for (const body of functionsOf(instrs)) {
     const head = body[0];
     if (head.op !== "enter") continue;
 
-    // Every temporary the lowering invented needs a slot of its own, below the
-    // locals the analyser already placed — and an 8-byte address needs 8 bytes,
-    // aligned, not the 4 an int would take.
-    const temps = new Map<string, number>();
-    let used = head.frame;
-    for (const instr of body) {
-      for (const value of valuesOf(instr)) {
-        if (value.kind === "temp" && !temps.has(value.name)) {
-          const width = value.width;
-          used = Math.ceil((used + width) / width) * width;
-          temps.set(value.name, -used);
-        }
-      }
-    }
-    const frame = Math.ceil(used / 16) * 16;
+    const { temps, size: frame } = layoutFrame(body, head.frame);
     out.setFrame(temps);
 
     const params = semantics.symbols.filter(
@@ -270,32 +249,6 @@ export function generate(
   }
 
   return { lines: out.lines, steps: log.all() };
-}
-
-function valuesOf(instr: IRInstr): IRValue[] {
-  switch (instr.op) {
-    case "move":
-      return [instr.dest, instr.src];
-    case "binary":
-      return [instr.dest, instr.left, instr.right];
-    case "unary":
-      return [instr.dest, instr.operand];
-    case "branchFalse":
-    case "branchTrue":
-      return [instr.cond];
-    case "call":
-      return instr.dest ? [instr.dest, ...instr.args] : instr.args;
-    case "return":
-      return instr.value ? [instr.value] : [];
-    case "addr":
-      return [instr.dest];
-    case "load":
-      return [instr.dest, instr.from];
-    case "store":
-      return [instr.to, instr.src];
-    default:
-      return [];
-  }
 }
 
 function emit(out: Emitter, instr: IRInstr): void {

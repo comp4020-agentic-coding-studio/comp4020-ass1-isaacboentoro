@@ -139,7 +139,7 @@ int main() {
   },
   {
     name: "No bounds check",
-    about: "nothing stops you leaving the array",
+    about: "run it and watch nothing complain",
     source: `int main() {
   int a[3];
   a[0] = 1;

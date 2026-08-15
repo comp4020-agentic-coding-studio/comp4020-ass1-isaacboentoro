@@ -20,8 +20,17 @@ export function spanOver(a: Span, b: Span): Span {
   return { start: Math.min(a.start, b.start), end: Math.max(a.end, b.end) };
 }
 
-export type StageId = "preprocess" | "scan" | "parse" | "semantics" | "ir" | "codegen";
+export type StageId =
+  | "preprocess"
+  | "scan"
+  | "parse"
+  | "semantics"
+  | "ir"
+  | "codegen"
+  /** Not a rewrite: this one executes what stage five produced. */
+  | "run";
 
+/** The six rewrites. Running is not one of them, so it is not in this list. */
 export const STAGES: readonly StageId[] = [
   "preprocess",
   "scan",
@@ -31,6 +40,9 @@ export const STAGES: readonly StageId[] = [
   "codegen",
 ] as const;
 
+/** Everything with a player on the page: the six rewrites, and then running it. */
+export const PLAYERS: readonly StageId[] = [...STAGES, "run"] as const;
+
 export const STAGE_TITLES: Record<StageId, string> = {
   preprocess: "Preprocess",
   scan: "Scan",
@@ -38,6 +50,7 @@ export const STAGE_TITLES: Record<StageId, string> = {
   semantics: "Analyse",
   ir: "Lower to IR",
   codegen: "Emit assembly",
+  run: "Run it",
 };
 
 /**
@@ -368,6 +381,8 @@ export type CodegenResult = {
 export type Compilation = {
   source: string;
   steps: Step[];
+  /** Present once the IR exists, because running is the IR's job. */
+  run?: import("./interpret").InterpretResult;
   preprocess: PreprocessResult;
   scan: ScanResult;
   parse: ParseResult;

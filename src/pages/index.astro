@@ -1,9 +1,10 @@
 ---
 import "../styles/global.css";
-import { STAGES, STAGE_TITLES } from "../compiler/types";
+import type { StageId } from "../compiler/types";
+import { PLAYERS, STAGES, STAGE_TITLES } from "../compiler/types";
 import { STAGE_IO } from "../compiler/stages";
 
-const BLURBS: Record<(typeof STAGES)[number], string> = {
+const BLURBS: Record<StageId, string> = {
   preprocess:
     "Text in, different text out. The compiler proper never sees what you wrote.",
   scan: "Characters become tokens. Spelling stops mattering; categories start.",
@@ -12,6 +13,7 @@ const BLURBS: Record<(typeof STAGES)[number], string> = {
     "Names get homes and types get checked. None of this is in your source.",
   ir: "The tree becomes a list. Control flow becomes jumps.",
   codegen: "Instructions a processor could run — and a lot of moving data around.",
+  run: "Not a rewrite. This executes the IR from stage five, one instruction at a time.",
 };
 ---
 
@@ -24,7 +26,7 @@ const BLURBS: Record<(typeof STAGES)[number], string> = {
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
     <meta
       name="description"
-      content="An interactive explainer. Type C — pointers and arrays included — then play each stage of the compiler and watch it rewrite your code six times."
+      content="An interactive explainer. Type C — pointers and arrays included — play each stage of the compiler rewriting it, then run the result."
     />
   </head>
   <body>
@@ -35,7 +37,7 @@ const BLURBS: Record<(typeof STAGES)[number], string> = {
       <h1 class="topbar-title">Compiling C, explained</h1>
       <nav aria-label="Sections">
         <a href="#source-section">SOURCE</a>
-        {STAGES.map((stage) => <a href={`#stage-${stage}`}>{STAGE_TITLES[stage]}</a>)}
+        {PLAYERS.map((stage) => <a href={`#stage-${stage}`}>{STAGE_TITLES[stage]}</a>)}
         <a href="#limits">LIMITS</a>
       </nav>
     </header>
@@ -43,8 +45,8 @@ const BLURBS: Record<(typeof STAGES)[number], string> = {
     <main>
       <p class="lede">
         Compiling is not one translation. It is six, and each one throws away
-        something the last one needed. Type C below, then play any stage to watch
-        it do its work one step at a time.
+        something the last one needed. Type C below, play any stage to watch it do
+        its work one step at a time, then run what comes out.
       </p>
 
       <section id="source-section" aria-labelledby="source-heading">
@@ -87,11 +89,11 @@ const BLURBS: Record<(typeof STAGES)[number], string> = {
       </section>
 
       {
-        STAGES.map((stage, index) => (
+        PLAYERS.map((stage, index) => (
           <section class="stage" id={`stage-${stage}`} aria-labelledby={`h-${stage}`}>
             <div class="section-head">
               <p class="section-index" aria-hidden="true">
-                STAGE {index + 1} / {STAGES.length}
+                {stage === "run" ? "AFTERWARDS" : `STAGE ${index + 1} / ${STAGES.length}`}
               </p>
               <h2 class="section-name" id={`h-${stage}`}>
                 {STAGE_TITLES[stage]}
@@ -194,10 +196,16 @@ const BLURBS: Record<(typeof STAGES)[number], string> = {
             compilers exist.
           </li>
           <li>
-            No assembler and no linker. The last stage is assembly text; turning
-            it into an executable is two more stages that do not run here. It does
-            assemble, though — <code>gcc</code> accepts it, and a test builds and
-            runs it on every check.
+            No assembler and no linker. The x86-64 is text, and nothing on this
+            page executes it — there is no processor here to. It does assemble,
+            though: <code>gcc</code> accepts it, and a test builds and runs it on
+            every check.
+          </li>
+          <li>
+            What runs below is the <em>IR</em>, interpreted — stage five, not stage
+            six. Same program, one level up, on the same frame layout. Memory is a
+            flat array, so a pointer is an index into it and the addresses are not
+            the ones a real process would see.
           </li>
         </ul>
       </section>

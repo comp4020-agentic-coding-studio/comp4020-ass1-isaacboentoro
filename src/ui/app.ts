@@ -1,6 +1,6 @@
 import { compile } from "../compiler/pipeline";
 import type { Compilation, Span, StageId } from "../compiler/types";
-import { STAGES } from "../compiler/types";
+import { PLAYERS } from "../compiler/types";
 import { type BuiltPanes, buildPanes, buildRules } from "./panes";
 import { DEFAULT_PRESET, PRESETS } from "./presets";
 import { clamp } from "./reveal";
@@ -57,7 +57,7 @@ export function start(): void {
   let built: BuiltPanes | undefined;
   let debounce: number | undefined;
 
-  const players: StagePlayer[] = STAGES.map((stage) => ({
+  const players: StagePlayer[] = PLAYERS.map((stage) => ({
     stage,
     scrubber: required<HTMLInputElement>(`scrub-${stage}`),
     play: required<HTMLButtonElement>(`play-${stage}`),

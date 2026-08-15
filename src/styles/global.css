@@ -737,6 +737,40 @@ mark {
 
 /* ir and codegen */
 
+.effects {
+  display: grid;
+  gap: var(--rule);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.effect {
+  align-items: baseline;
+  border: var(--rule) solid var(--dimmer);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.3rem 0.5rem;
+}
+
+.effect-text {
+  font-size: 0.82rem;
+}
+
+.effect-where {
+  color: var(--dim);
+  font-size: 0.68rem;
+}
+
+.effect-result {
+  border-color: var(--accent);
+}
+
+.effect-result .effect-text {
+  color: var(--accent);
+}
+
 .listing-ir,
 .listing-asm {
   display: grid;

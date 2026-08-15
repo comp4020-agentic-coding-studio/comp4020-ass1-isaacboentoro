@@ -1,4 +1,5 @@
 import { generate } from "./codegen";
+import { interpret } from "./interpret";
 import { lower } from "./ir";
 import { scan } from "./lexer";
 import { parse } from "./parser";
@@ -81,7 +82,15 @@ export function compile(source: string): Compilation {
   add(codegen.steps);
   reached.push("codegen");
 
+  // Running is not a rewrite, so it comes after the pipeline rather than in it.
+  // It executes the IR, not the assembly: the assembly would need a processor,
+  // and the IR is what the page just showed being built.
+  const run = interpret(ir.instrs, semantics);
+  add(run.steps);
+  reached.push("run");
+
   return {
+    run,
     source,
     steps,
     preprocess: pre,

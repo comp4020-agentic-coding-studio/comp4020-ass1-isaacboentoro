@@ -105,6 +105,20 @@ these, and each one is here because breaking it cost me something.
 - **`a[i]` lowers to the multiply and the add, never to one opaque step.** The
   element size is the lesson; hiding it in an addressing mode would waste the only
   stage where it is visible.
+- **Running is not a seventh rewrite, and the page must not imply it is.** The
+  run section executes the IR from stage five — the listing already on screen —
+  not the assembly, which would need a processor. It is numbered "AFTERWARDS"
+  rather than "STAGE 7", `STAGES` still holds six, and `PLAYERS` is what the UI
+  iterates. `spec/page.test.ts` checks exactly six sections claim to be stages.
+- **The interpreter and codegen share `frames.ts`.** If they disagreed by a byte,
+  `&x` would mean one thing in the run pane and another in the assembly pane, and
+  the page would be quietly lying about the connection. There is a test pinning an
+  address in both.
+- **Three implementations, one answer.** `spec/machine.test.ts` compares our
+  assembly built by gcc, gcc's own build, and the interpreter. Two agreeing could
+  be a shared mistake; three is evidence. Add a program to `spec/programs/`
+  whenever the compiler learns something — but never one that loops forever, since
+  gcc will happily run it.
 - **Say what a stage really consumes.** Only the preprocessor reads your source;
   the scanner reads preprocessed text, the parser reads tokens, and lowering walks
   the syntax tree. `stages.ts` holds the in/out pairs the page shows, and

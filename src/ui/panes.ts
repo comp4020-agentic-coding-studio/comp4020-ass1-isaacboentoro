@@ -3,7 +3,7 @@ import { formatInstr } from "../compiler/ir";
 import type { AstNode, Compilation, StageId } from "../compiler/types";
 import { typeName } from "../compiler/ctypes";
 import { METHOD, RULES_BY_STAGE } from "../compiler/grammar";
-import { STAGES, childrenOf, labelOf } from "../compiler/types";
+import { PLAYERS, childrenOf, labelOf } from "../compiler/types";
 import { type StageTrace, tracesOf } from "./reveal";
 
 /**
@@ -76,7 +76,7 @@ export function buildPanes(
   const reveals = {} as Record<StageId, Reveal[]>;
   const bodies = {} as Record<StageId, HTMLElement>;
 
-  for (const stage of STAGES) {
+  for (const stage of PLAYERS) {
     const stageReveals: Reveal[] = [];
     reveals[stage] = stageReveals;
     const at = traces[stage].producedAt;
@@ -145,6 +145,9 @@ export function buildPanes(
         break;
       case "codegen":
         buildCodegen(compilation, body, reveal);
+        break;
+      case "run":
+        buildRun(compilation, body, reveal);
         break;
     }
   }
@@ -356,6 +359,55 @@ function buildIr(
     listing.append(reveal(line, instr.id));
   }
   body.append(listing);
+}
+
+function buildRun(
+  compilation: Compilation,
+  body: HTMLElement,
+  reveal: Reveals,
+): void {
+  const run = compilation.run;
+  if (!run) {
+    body.append(
+      el("p", "pane-note", "Nothing to run: the program never reached the IR."),
+    );
+    return;
+  }
+
+  if (run.error) {
+    const box = el("div", "diagnostic");
+    box.setAttribute("role", "status");
+    box.append(el("p", "diagnostic-message", run.error.message));
+    if (run.error.hint) box.append(el("p", "diagnostic-hint", run.error.hint));
+    body.append(box);
+  }
+
+  const list = el("ol", "effects");
+  for (const effect of run.effects) {
+    const item = el("li", effect.id === "run:result" ? "effect effect-result" : "effect");
+    item.append(el("span", "effect-text", effect.text));
+    item.append(el("span", "effect-where", effect.instr));
+    list.append(reveal(item, effect.id));
+  }
+  body.append(list);
+
+  if (run.truncated) {
+    body.append(
+      el(
+        "p",
+        "pane-note",
+        `The trace stops here, but the program did not: ${run.executed.toLocaleString()} instructions ran in total. Stepping through all of them would take longer than reading the source.`,
+      ),
+    );
+  }
+
+  body.append(
+    el(
+      "p",
+      "pane-note",
+      "Memory is one flat array here, so a pointer is an index into it. That is why writing past the end of an array lands on whatever happens to sit next to it, quietly, exactly as C does.",
+    ),
+  );
 }
 
 function buildCodegen(
