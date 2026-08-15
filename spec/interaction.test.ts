@@ -270,6 +270,39 @@ describe("the page, driven", () => {
     }
   });
 
+  it("shows the grammar and marks the rule the current step applied", () => {
+    const rules = document.querySelectorAll("#rules-parse .rule");
+    expect(rules.length).toBeGreaterThan(10);
+
+    const markedAt = (cursor: number) => {
+      scrubTo("parse", cursor);
+      const marked = document.querySelectorAll<HTMLElement>("#rules-parse .rule.is-rule");
+      // One rule at a time: the accent means "here", and here is one place.
+      expect(marked.length).toBeLessThanOrEqual(1);
+      return marked[0]?.dataset.rule;
+    };
+
+    const seen = new Set<string | undefined>();
+    const max = Number((document.getElementById("scrub-parse") as HTMLInputElement).max);
+    for (let cursor = 0; cursor <= max; cursor += 1) seen.add(markedAt(cursor));
+    seen.delete(undefined);
+    expect(seen.size).toBeGreaterThan(3);
+  });
+
+  it("leaves the grammar visible at every step, unlike the artefacts", () => {
+    // Rules are not produced by the stage, so they never hide.
+    scrubTo("parse", 0);
+    for (const rule of document.querySelectorAll("#rules-parse .rule")) {
+      expect(rule.hasAttribute("data-reveal")).toBe(false);
+    }
+  });
+
+  it("gives the stages with no grammar no listing at all", () => {
+    expect(document.querySelectorAll("#rules-ir .rule")).toHaveLength(0);
+    expect(document.querySelectorAll("#rules-codegen .rule")).toHaveLength(0);
+    expect(document.querySelectorAll("#rules-scan .rule").length).toBeGreaterThan(3);
+  });
+
   it("does not highlight the whole file for a step that is about the whole file", () => {
     // "lay out main's frame" spans the function; marking every line of a short
     // program is noise, so above 60% coverage the commentary carries it alone.

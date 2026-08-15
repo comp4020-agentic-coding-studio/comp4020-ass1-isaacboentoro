@@ -132,6 +132,9 @@ const BLURBS: Record<(typeof STAGES)[number], string> = {
                 {/* The editor is the accessible copy of the source; these echoes
                     are visual, so they stay out of the accessibility tree. */}
                 <pre class="echo" id={`echo-${stage}`} aria-hidden="true" />
+                {/* Filled for the two stages that have a grammar; the rule the
+                    current step applied is marked as it plays. */}
+                <div class="rules" id={`rules-${stage}`} />
               </div>
               <div class="stage-column">
                 <p class="field-label">What it produces</p>

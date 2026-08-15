@@ -105,6 +105,13 @@ these, and each one is here because breaking it cost me something.
 - **`a[i]` lowers to the multiply and the add, never to one opaque step.** The
   element size is the lesson; hiding it in an addressing mode would waste the only
   stage where it is visible.
+- **The grammar on the page is data, and a test keeps it true.** `grammar.ts`
+  holds the productions the page shows; every scan and parse step names one of
+  them, and `spec/compiler.test.ts` fails if a step names a rule that does not
+  exist OR if a listed rule is never applied. Both directions matter — an unused
+  rule is one that has drifted from the code, and a wrong grammar shown
+  confidently is worse than no grammar. The same test rejects any left-recursive
+  production, because a top-down parser cannot implement one.
 - **String tests cannot see a wrong `setcc` or a wrong stride.** `spec/machine.test.ts`
   assembles the emitted code with real gcc, runs it, and compares the exit status
   against a binary gcc built from the same source. Add a program to

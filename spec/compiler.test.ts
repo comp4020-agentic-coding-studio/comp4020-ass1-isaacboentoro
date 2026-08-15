@@ -6,6 +6,7 @@ import { compile } from "../src/compiler/pipeline";
 import { analyse } from "../src/compiler/semantics";
 import { preprocess } from "../src/compiler/preprocess";
 import { INT, typeName } from "../src/compiler/ctypes";
+import { METHOD, PARSE_RULES, RULES_BY_STAGE } from "../src/compiler/grammar";
 import type { AstNode, Expr, Span, Stmt } from "../src/compiler/types";
 import { childrenOf, labelOf } from "../src/compiler/types";
 
@@ -866,5 +867,79 @@ describe("pointers and arrays", () => {
     const asm = compileOk("int main() { char a[2]; a[0] = 'x'; return a[0]; }")
       .codegen.lines.map((line) => line.text);
     expect(asm.some((line) => /^mov byte ptr \[rax\], \d+$/.test(line))).toBe(true);
+  });
+});
+
+describe("the grammar shown on the page", () => {
+  const PROGRAM = `#define TWO 2
+int add(int *p, int n) {
+  int total = 0;
+  for (int i = 0; i < n; i = i + 1) {
+    total = total + p[i];
+    if (total > 100) { break; } else { continue; }
+  }
+  while (total) { total = total - TWO; }
+  char c = 'x';
+  return total + c;
+}
+
+int main() {
+  int a[3];
+  a[0] = 1;
+  int *q = &a[0];
+  return add(q, 3);
+}`;
+
+  const compiled = compile(PROGRAM);
+
+  it("compiles the program that exercises every rule", () => {
+    expect(compiled.error?.message).toBeUndefined();
+  });
+
+  it("names a rule on every scanning and parsing step", () => {
+    for (const step of compiled.steps) {
+      if (step.stage !== "scan" && step.stage !== "parse") continue;
+      expect(step.rule, `${step.stage}: "${step.title}" names no rule`).toBeTruthy();
+    }
+  });
+
+  it("never names a rule that is not in the grammar", () => {
+    for (const step of compiled.steps) {
+      const rules = RULES_BY_STAGE[step.stage];
+      if (!rules || !step.rule) continue;
+      expect(
+        rules.map((rule) => rule.id),
+        `${step.stage} step "${step.title}"`,
+      ).toContain(step.rule);
+    }
+  });
+
+  it("has no rule that the compiler never uses", () => {
+    // Both directions matter: an unused rule is a rule that has drifted away
+    // from the code, and it would be shown to a reader as if it were true.
+    const used = new Set(compiled.steps.map((step) => step.rule));
+    for (const [stage, rules] of Object.entries(RULES_BY_STAGE)) {
+      for (const rule of rules) {
+        expect(used.has(rule.id), `${stage}: ${rule.id} is never applied`).toBe(true);
+      }
+    }
+  });
+
+  it("writes every production without left recursion", () => {
+    // A top-down parser cannot survive `expr ::= expr '+' term`, so a rule whose
+    // right side starts with its own name is a grammar the code cannot implement.
+    for (const rule of PARSE_RULES) {
+      const [left, right] = rule.text.split("::=");
+      const head = left.trim().replace(/\(.*\)/, "");
+      expect(
+        right.trim().startsWith(head),
+        `${rule.id} is left-recursive: ${rule.text}`,
+      ).toBe(false);
+    }
+  });
+
+  it("explains the method, and what the alternative would cost", () => {
+    expect(METHOD.parse).toContain("Recursive descent");
+    expect(METHOD.parse).toContain("LR");
   });
 });

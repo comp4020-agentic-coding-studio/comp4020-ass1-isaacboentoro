@@ -51,6 +51,12 @@ export type Step = {
   explain: string;
   consumed: Span | null;
   produced: string[];
+  /**
+   * The grammar rule this step applied, for the stages that have a grammar.
+   * `spec/compiler.test.ts` checks every one of these exists in `grammar.ts`,
+   * so the rules shown on the page cannot drift from the parser behind them.
+   */
+  rule?: string;
 };
 
 /** A stage refusing to continue. Stages return these; they never throw. */

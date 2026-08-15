@@ -97,8 +97,15 @@ class Parser {
     return id;
   }
 
-  private note(title: string, explain: string, span: Span, ids: string[]): void {
-    this.log.add(title, explain, span, ids);
+  /** Every note names the grammar rule it came from; `grammar.ts` lists them. */
+  private note(
+    title: string,
+    explain: string,
+    span: Span,
+    ids: string[],
+    rule: string,
+  ): void {
+    this.log.add(title, explain, span, ids, rule);
   }
 
   // ------------------------------------------------------------------ program
@@ -111,6 +118,7 @@ class Parser {
       "The parser expects a sequence of function definitions and nothing else at the top level.",
       this.peek().span,
       [id],
+      "program",
     );
 
     while (this.peek().kind !== "eof") {
@@ -217,6 +225,20 @@ class Parser {
       void close;
     }
 
+    // The declarator is where C is at its least obvious, so it says what it read
+    // even though it builds no node of its own.
+    this.note(
+      `declarator ${nameToken.text}`,
+      type.kind === "array"
+        ? "Brackets bind after the name, so this is an array of the base type — the whole block, not a pointer to it."
+        : type.kind === "pointer"
+          ? "Stars bind before the name. Read it as: this name, dereferenced, is the base type."
+          : "No stars and no brackets, so the declared type is the base type exactly as written.",
+      spanOver(nameToken.span, nameToken.span),
+      [],
+      "declarator",
+    );
+
     return { type, nameToken };
   }
 
@@ -240,6 +262,7 @@ class Parser {
       "A type followed by a name and a parenthesis is a function definition. The parser commits to that shape now and fills it in.",
       spanOver(typeToken.span, nameToken.span),
       [id],
+      "function",
     );
 
     this.expect("(", "to open the parameter list");
@@ -277,6 +300,7 @@ class Parser {
         : "Parameters are declarations too — they will get frame slots like locals do.",
       spanOver(token.span, nameToken.span),
       [id],
+      "param",
     );
     return {
       id,
@@ -297,6 +321,7 @@ class Parser {
       "A block is a new scope. Names declared inside it stop existing at the closing brace.",
       open.span,
       [id],
+      "block",
     );
     const stmts: Stmt[] = [];
     while (!this.at("}") && this.peek().kind !== "eof") {
@@ -354,6 +379,7 @@ class Parser {
         : "A declaration introduces a name. The parser records it; whether it is legal here is the next stage's problem.",
       spanOver(token.span, semi.span),
       [id],
+      "declaration",
     );
     return {
       id,
@@ -373,6 +399,7 @@ class Parser {
       "Control flow is still a tree here. It becomes jumps and labels two stages later.",
       keyword.span,
       [id],
+      "if",
     );
     this.expect("(", "after `if`");
     const cond = this.parseExpression();
@@ -398,6 +425,7 @@ class Parser {
       "One condition, one body. The loop is a node with two children, not yet a backward jump.",
       keyword.span,
       [id],
+      "while",
     );
     this.expect("(", "after `while`");
     const cond = this.parseExpression();
@@ -420,6 +448,7 @@ class Parser {
       "A `for` is three optional expressions and a body — the parser keeps them apart so lowering can reorder them.",
       keyword.span,
       [id],
+      "for",
     );
     this.expect("(", "after `for`");
 
@@ -461,6 +490,7 @@ class Parser {
       "The value is computed first, then handed back. Lowering will make that order explicit.",
       spanOver(keyword.span, semi.span),
       [id],
+      "return",
     );
     return {
       id,
@@ -479,6 +509,7 @@ class Parser {
       "A bare jump. Which label it lands on depends on the loop it sits in, so lowering decides.",
       spanOver(keyword.span, semi.span),
       [id],
+      "jump",
     );
     return {
       id,
@@ -496,6 +527,7 @@ class Parser {
       "The semicolon is what turns an expression into a statement: compute it, discard the value.",
       semi.span,
       [id],
+      "exprstmt",
     );
     return {
       id,
@@ -543,6 +575,7 @@ class Parser {
         : "The left side is a place, not a value. Lowering will compute its address rather than reading it.",
       span,
       [id],
+      "assignment",
     );
     return { id, kind: "Assign", span, target: left, value };
   }
@@ -566,6 +599,7 @@ class Parser {
         `Both operands are complete, so \`${token.text}\` becomes their parent. Precedence decided the shape, not the order you read it in.`,
         span,
         [id],
+        "binary",
       );
       left = { id, kind: "Binary", span, op: token.text, left, right };
     }
@@ -587,6 +621,7 @@ class Parser {
           : "`&` asks for the address of a place. It is the only way to get one, and it is why the variable had to live in memory at all.",
         span,
         [id],
+        "unary",
       );
       return deref
         ? { id, kind: "Deref", span, operand }
@@ -603,6 +638,7 @@ class Parser {
         "A prefix operator takes exactly one operand and binds tighter than any binary one.",
         span,
         [id],
+        "unary",
       );
       return { id, kind: "Unary", span, op: token.text, operand };
     }
@@ -625,6 +661,7 @@ class Parser {
         "`a[i]` is defined as `*(a + i)` — brackets are notation for pointer arithmetic, which is why `i[a]` is also legal C.",
         span,
         [id],
+        "postfix",
       );
       value = { id, kind: "Index", span, array: value, index };
     }
@@ -643,6 +680,7 @@ class Parser {
         "A leaf. Nothing to compute — the value is already known at compile time.",
         token.span,
         [id],
+        "primary",
       );
       return { id, kind: "NumberLit", span: token.span, value: token.value ?? 0 };
     }
@@ -655,6 +693,7 @@ class Parser {
         `A character literal is the integer ${token.value}. The quotes are notation, not a type.`,
         token.span,
         [id],
+        "primary",
       );
       return {
         id,
@@ -674,6 +713,7 @@ class Parser {
         "A use of a name. The parser does not check it exists; that is the analyser's job.",
         token.span,
         [id],
+        "primary",
       );
       return { id, kind: "Ident", span: token.span, name: token.text };
     }
@@ -710,6 +750,7 @@ class Parser {
       "The arguments are already parsed, so the call node closes over them. Whether the function exists is checked later.",
       span,
       [id],
+      "call",
     );
     return { id, kind: "Call", span, callee: nameToken.text, args };
   }

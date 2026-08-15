@@ -1,7 +1,7 @@
 import { compile } from "../compiler/pipeline";
 import type { Compilation, Span, StageId } from "../compiler/types";
 import { STAGES } from "../compiler/types";
-import { type BuiltPanes, buildPanes } from "./panes";
+import { type BuiltPanes, buildPanes, buildRules } from "./panes";
 import { DEFAULT_PRESET, PRESETS } from "./presets";
 import { clamp } from "./reveal";
 
@@ -36,6 +36,7 @@ type StagePlayer = {
   title: HTMLElement;
   explain: HTMLElement;
   echo: HTMLElement;
+  rules: HTMLElement;
   body: HTMLElement;
   cursor: number;
   timer?: number;
@@ -64,11 +65,15 @@ export function start(): void {
     title: required(`title-${stage}`),
     explain: required(`explain-${stage}`),
     echo: required(`echo-${stage}`),
+    rules: required(`rules-${stage}`),
     body: required(`pane-${stage}`),
     cursor: 0,
   }));
 
   // ------------------------------------------------------------------ presets
+
+  // The grammar is fixed, so it is built once rather than per compile.
+  for (const player of players) buildRules(player.stage, player.rules);
 
   for (const preset of PRESETS) {
     const button = document.createElement("button");
@@ -173,6 +178,11 @@ export function start(): void {
 
     const section = player.body.closest(".stage");
     section?.classList.toggle("is-empty", trace.steps.length === 0);
+
+    // Grammar rules do not appear and accumulate; only the marker moves.
+    for (const rule of player.rules.querySelectorAll<HTMLElement>("[data-rule]")) {
+      rule.classList.toggle("is-rule", rule.dataset.rule === step?.rule);
+    }
 
     highlightEcho(player, step?.consumed ?? null);
     scrollCurrentIntoView(player);

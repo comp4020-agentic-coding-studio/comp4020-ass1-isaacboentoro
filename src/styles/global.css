@@ -399,6 +399,62 @@ mark {
   overflow: auto;
 }
 
+/* ------------------------------------------------------------------ grammar */
+
+.rules {
+  margin-top: 1.25rem;
+}
+
+.rule-list {
+  border: var(--rule) solid var(--dimmer);
+  display: grid;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.rule {
+  border-bottom: var(--rule) solid var(--dimmer);
+  padding: 0.45rem 0.6rem;
+  transition:
+    background-color var(--fast) var(--ease),
+    border-color var(--fast) var(--ease);
+}
+
+.rule:last-child {
+  border-bottom: 0;
+}
+
+.rule-text {
+  background: none;
+  display: block;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  padding: 0;
+}
+
+.rule-note {
+  color: var(--dim);
+  display: block;
+  font-size: 0.68rem;
+  margin-top: 0.2rem;
+}
+
+/* The rule the current step applied. Same meaning as everywhere else the accent
+   appears: this is the one you are standing on. */
+.rule.is-rule {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+/* `code` sets its own colour, so the marked rule has to override both parts or
+   the production stays white on yellow. axe caught exactly that. */
+.rule.is-rule .rule-note,
+.rule.is-rule .rule-text {
+  color: var(--bg);
+}
+
 .stage-body {
   border: var(--rule) solid var(--fg);
   max-height: 26rem;

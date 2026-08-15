@@ -2,6 +2,7 @@ import { formatAsm } from "../compiler/codegen";
 import { formatInstr } from "../compiler/ir";
 import type { AstNode, Compilation, StageId } from "../compiler/types";
 import { typeName } from "../compiler/ctypes";
+import { METHOD, RULES_BY_STAGE } from "../compiler/grammar";
 import { STAGES, childrenOf, labelOf } from "../compiler/types";
 import { type StageTrace, tracesOf } from "./reveal";
 
@@ -32,6 +33,34 @@ function el(
   if (className) node.className = className;
   if (text !== undefined) node.textContent = text;
   return node;
+}
+
+/**
+ * The grammar a stage follows, listed beside the source it is reading.
+ *
+ * These are not artefacts: they exist before the stage runs and they do not
+ * accumulate, so they are never hidden. What moves is the marker saying which
+ * rule the current step applied.
+ */
+export function buildRules(stage: StageId, container: HTMLElement): void {
+  container.replaceChildren();
+  const rules = RULES_BY_STAGE[stage];
+  if (!rules) return;
+
+  container.append(
+    el("p", "field-label", stage === "scan" ? "The rules it matches" : "The grammar it follows"),
+  );
+
+  const list = el("ol", "rule-list");
+  for (const rule of rules) {
+    const item = el("li", "rule");
+    item.dataset.rule = rule.id;
+    item.append(el("code", "rule-text", rule.text));
+    item.append(el("span", "rule-note", rule.note));
+    list.append(item);
+  }
+  container.append(list);
+  container.append(el("p", "pane-note", METHOD[stage] ?? ""));
 }
 
 export function buildPanes(

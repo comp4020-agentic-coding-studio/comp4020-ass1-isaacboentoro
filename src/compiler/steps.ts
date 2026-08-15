@@ -14,6 +14,7 @@ export class StepLog {
     explain: string,
     consumed: Span | null,
     produced: string[] = [],
+    rule?: string,
   ): void {
     this.steps.push({
       index: -1,
@@ -22,6 +23,7 @@ export class StepLog {
       explain,
       consumed,
       produced,
+      ...(rule ? { rule } : {}),
     });
   }
 

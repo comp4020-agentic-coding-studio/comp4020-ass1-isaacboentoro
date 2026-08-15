@@ -83,12 +83,7 @@ export function scan(text: string, map: number[]): ScanResult {
       ...(value === undefined ? {} : { value }),
     };
     tokens.push(token);
-    log.add(
-      `${kind}: ${token.text}`,
-      EXPLAIN[kind],
-      token.span,
-      [token.id],
-    );
+    log.add(`${kind}: ${token.text}`, EXPLAIN[kind], token.span, [token.id], kind);
     return token;
   };
 

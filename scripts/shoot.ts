@@ -293,6 +293,24 @@ async function main(): Promise<void> {
       note(`sections resized while playing: ${jitter.join(", ")}`);
     }
 
+    // The grammar listing marks the rule the current step applied, and that
+    // marker has to move with the cursor rather than sitting on one rule.
+    const rulesSeen = new Set<string>();
+    const parseSteps = await page.$eval("#scrub-parse", (el) =>
+      Number((el as HTMLInputElement).max),
+    );
+    for (let cursor = 0; cursor <= parseSteps; cursor += 1) {
+      await scrubTo(page, "parse", cursor);
+      const active = await page.$$eval("#rules-parse .rule.is-rule", (nodes) =>
+        nodes.map((node) => (node as HTMLElement).dataset.rule ?? ""),
+      );
+      if (active.length > 1) note(`${active.length} grammar rules marked at once`);
+      for (const id of active) rulesSeen.add(id);
+    }
+    if (rulesSeen.size < 4) {
+      note(`only ${rulesSeen.size} grammar rule(s) ever marked while parsing`);
+    }
+
     // Independence: moving one stage must not move any other.
     for (const stage of STAGES) await scrubTo(page, stage, 1);
     const before = await Promise.all(STAGES.map((stage) => shownIn(page, stage)));
@@ -410,6 +428,7 @@ async function main(): Promise<void> {
       `${viewport.name} ${viewport.width}x${viewport.height}: ${sections.length} sections, ` +
         `revealed ${STAGES.map((s) => `${s}=${counts[s].start}->${counts[s].end}`).join(" ")}, ` +
         `tree grew ${grewFrom}->${grewMid}->${grewTo}px, ` +
+        `${rulesSeen.size} grammar rules marked, ` +
         `reduced motion honoured, sections hold their height, ` +
         `independent, keyboard ok, cursors survive resize, ` +
         `${overflow <= 1 ? "no" : `${overflow}px`} overflow, ` +
