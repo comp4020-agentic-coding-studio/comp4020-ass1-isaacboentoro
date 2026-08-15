@@ -7,8 +7,9 @@ import { analyse } from "../src/compiler/semantics";
 import { preprocess } from "../src/compiler/preprocess";
 import { INT, typeName } from "../src/compiler/ctypes";
 import { METHOD, PARSE_RULES, RULES_BY_STAGE } from "../src/compiler/grammar";
+import { SOURCE, STAGE_IO } from "../src/compiler/stages";
 import type { AstNode, Expr, Span, Stmt } from "../src/compiler/types";
-import { childrenOf, labelOf } from "../src/compiler/types";
+import { STAGES, childrenOf, labelOf } from "../src/compiler/types";
 
 /**
  * Stage-level contracts. The one that matters most is the span contract: every
@@ -941,5 +942,74 @@ int main() {
   it("explains the method, and what the alternative would cost", () => {
     expect(METHOD.parse).toContain("Recursive descent");
     expect(METHOD.parse).toContain("LR");
+  });
+});
+
+describe("what each stage actually consumes", () => {
+  const source = `int main() {
+  int a[2];
+  a[0] = 1 + 2;
+  int *p = &a[0];
+  return *p;
+}`;
+  const compiled = compile(source);
+
+  it("consumes only what an earlier stage produced", () => {
+    // The chain has to hang together, or the labels on the page are decoration.
+    const producedSoFar = new Set<string>([SOURCE]);
+    for (const stage of STAGES) {
+      for (const input of STAGE_IO[stage].consumes) {
+        expect(
+          producedSoFar.has(input),
+          `${stage} consumes "${input}", which nothing before it produces`,
+        ).toBe(true);
+      }
+      producedSoFar.add(STAGE_IO[stage].produces);
+    }
+  });
+
+  it("says lowering reads the tree, because it does", () => {
+    // The claim on the page and the argument list of `lower()` have to agree.
+    expect(STAGE_IO.ir.consumes).toContain("a syntax tree");
+    expect(STAGE_IO.parse.produces).toBe("a syntax tree");
+    expect(STAGE_IO.ir.consumes).toContain(STAGE_IO.semantics.produces);
+  });
+
+  it("never claims a later stage reads your source", () => {
+    for (const stage of STAGES) {
+      if (stage === "preprocess") continue;
+      expect(STAGE_IO[stage].consumes, stage).not.toContain(SOURCE);
+    }
+  });
+
+  it("derives every IR instruction from a node of the tree", () => {
+    // The strongest available evidence that lowering walks the AST rather than
+    // re-reading anything: every instruction's span is one it could only have
+    // got from a tree node it visited.
+    const spans = new Set<string>();
+    const collect = (node: AstNode) => {
+      spans.add(`${node.span.start}:${node.span.end}`);
+      if (node.kind === "Function") {
+        spans.add(`${node.nameSpan.start}:${node.nameSpan.end}`);
+      }
+      childrenOf(node).forEach(collect);
+    };
+    collect(compiled.parse.program);
+
+    expect(compiled.ir.instrs.length).toBeGreaterThan(5);
+    for (const instr of compiled.ir.instrs) {
+      expect(
+        spans.has(`${instr.span.start}:${instr.span.end}`),
+        `${formatInstr(instr)} has a span no AST node has`,
+      ).toBe(true);
+    }
+  });
+
+  it("derives every assembly line from an IR instruction", () => {
+    const irIds = new Set(compiled.ir.instrs.map((instr) => instr.id));
+    for (const line of compiled.codegen.lines) {
+      if (line.kind === "directive") continue;
+      expect(irIds.has(line.from ?? ""), line.text).toBe(true);
+    }
   });
 });

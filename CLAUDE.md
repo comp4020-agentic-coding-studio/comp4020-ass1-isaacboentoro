@@ -105,6 +105,13 @@ these, and each one is here because breaking it cost me something.
 - **`a[i]` lowers to the multiply and the add, never to one opaque step.** The
   element size is the lesson; hiding it in an addressing mode would waste the only
   stage where it is visible.
+- **Say what a stage really consumes.** Only the preprocessor reads your source;
+  the scanner reads preprocessed text, the parser reads tokens, and lowering walks
+  the syntax tree. `stages.ts` holds the in/out pairs the page shows, and
+  `spec/compiler.test.ts` checks everything a stage consumes was produced by an
+  earlier one — plus that every IR instruction's span matches an AST node's, which
+  is the evidence lowering really did walk the tree. The source echo beside each
+  stage is provenance, not input, and it is labelled as such.
 - **What a stage reads stays on screen while it plays.** On a wide screen the
   left column — source echo and grammar — is sticky and capped to the viewport,
   with the rule list scrolling inside it, so the production being applied is

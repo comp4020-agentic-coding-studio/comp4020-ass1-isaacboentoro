@@ -1,6 +1,7 @@
 ---
 import "../styles/global.css";
 import { STAGES, STAGE_TITLES } from "../compiler/types";
+import { STAGE_IO } from "../compiler/stages";
 
 const BLURBS: Record<(typeof STAGES)[number], string> = {
   preprocess:
@@ -96,6 +97,12 @@ const BLURBS: Record<(typeof STAGES)[number], string> = {
                 {STAGE_TITLES[stage]}
               </h2>
               <p class="section-blurb">{BLURBS[stage]}</p>
+              <p class="section-io">
+                <span class="io-label">in</span>
+                <span class="io-value">{STAGE_IO[stage].consumes.join(" + ")}</span>
+                <span class="io-label">out</span>
+                <span class="io-value">{STAGE_IO[stage].produces}</span>
+              </p>
             </div>
 
             <div class="player">
@@ -128,9 +135,11 @@ const BLURBS: Record<(typeof STAGES)[number], string> = {
 
             <div class="stage-grid">
               <div class="stage-column">
-                <p class="field-label">What it is reading</p>
-                {/* The editor is the accessible copy of the source; these echoes
-                    are visual, so they stay out of the accessibility tree. */}
+                {/* Not "what it is reading" — only the preprocessor reads your
+                    source. This is where the current step points back to, which
+                    is a different and more useful claim. The editor is the
+                    accessible copy, so these echoes stay out of the tree. */}
+                <p class="field-label">Where this step points in your source</p>
                 <pre class="echo" id={`echo-${stage}`} aria-hidden="true" />
                 {/* Filled for the two stages that have a grammar; the rule the
                     current step applied is marked as it plays. */}

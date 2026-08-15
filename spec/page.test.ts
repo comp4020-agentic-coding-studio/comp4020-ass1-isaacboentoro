@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { JSDOM } from "jsdom";
 import { describe, expect, it } from "vitest";
+import { STAGE_IO } from "../src/compiler/stages";
 import { STAGES, STAGE_TITLES } from "../src/compiler/types";
 
 /**
@@ -70,6 +71,27 @@ describe("one section per stage", () => {
       expect(node.getAttribute("aria-hidden")).toBe("true");
       expect(node.textContent).toMatch(/STAGE \d+ \/ 6/);
     }
+  });
+
+  it("states what each stage consumes and produces", () => {
+    // The page used to label your source as every stage's input, which is only
+    // true of the preprocessor.
+    for (const stage of STAGES) {
+      const io = document
+        .getElementById(`stage-${stage}`)
+        ?.querySelector(".section-io")?.textContent;
+      expect(io, stage).toContain(STAGE_IO[stage].produces);
+      for (const input of STAGE_IO[stage].consumes) {
+        expect(io, `${stage} should name its input`).toContain(input);
+      }
+    }
+  });
+
+  it("does not call the source echo an input", () => {
+    const labels = [...document.querySelectorAll(".stage-column .field-label")].map(
+      (node) => node.textContent?.trim(),
+    );
+    expect(labels).not.toContain("What it is reading");
   });
 
   it("has no single global player left over", () => {
