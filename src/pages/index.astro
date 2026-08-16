@@ -3,6 +3,21 @@ import "../styles/global.css";
 import type { StageId } from "../compiler/types";
 import { PLAYERS, STAGES, STAGE_TITLES } from "../compiler/types";
 import { STAGE_IO } from "../compiler/stages";
+import { PALETTES, paletteCss } from "../ui/palettes";
+
+/**
+ * The dock is one row on a 390px phone, so the stages go by number there and by
+ * name where there is room. Both are in the markup; CSS picks.
+ */
+const JUMPS: { id: string; short: string; long: string }[] = [
+  { id: "source-section", short: "IN", long: "Source" },
+  ...PLAYERS.map((stage, index) => ({
+    id: `stage-${stage}`,
+    short: stage === "run" ? "RUN" : String(index + 1),
+    long: STAGE_TITLES[stage],
+  })),
+  { id: "limits", short: "?", long: "Limits" },
+];
 
 const BLURBS: Record<StageId, string> = {
   preprocess:
@@ -28,6 +43,33 @@ const BLURBS: Record<StageId, string> = {
       name="description"
       content="An interactive explainer. Type C — pointers and arrays included — play each stage of the compiler rewriting it, then run the result."
     />
+    {/* Every palette, as CSS custom properties, from the one place they are
+        defined. Inline rather than a stylesheet so that the colours are in the
+        first byte of the document, not one request later. */}
+    <style is:inline set:html={paletteCss()}></style>
+
+    {/* Before first paint, so the page never flashes the wrong colours. The
+        rules are the ones in `src/ui/prefs.ts` and `src/ui/palettes.ts`: a
+        stored choice wins, otherwise the system preference does, otherwise the
+        page's own palette. `spec/page.test.ts` checks the keys still match,
+        since this copy cannot import either module. */}
+    <script is:inline define:vars={{ ids: PALETTES.map((palette) => palette.id) }}>
+      try {
+        const stored = localStorage.getItem("compiling-c:theme");
+        const light =
+          stored === "light" ||
+          (stored !== "dark" &&
+            window.matchMedia("(prefers-color-scheme: light)").matches);
+        document.documentElement.dataset.theme = light ? "light" : "dark";
+        const palette = localStorage.getItem("compiling-c:palette");
+        document.documentElement.dataset.palette = ids.includes(palette)
+          ? palette
+          : "brutalist";
+      } catch {
+        document.documentElement.dataset.theme = "dark";
+        document.documentElement.dataset.palette = "brutalist";
+      }
+    </script>
   </head>
   <body>
     {/* No display headline: the page opens on the tool. The h1 stays as a
@@ -35,11 +77,6 @@ const BLURBS: Record<StageId, string> = {
         accessibility problem, and `spec/invariants.test.ts` enforces it. */}
     <header class="topbar">
       <h1 class="topbar-title">Compiling C, explained</h1>
-      <nav aria-label="Sections">
-        <a href="#source-section">SOURCE</a>
-        {PLAYERS.map((stage) => <a href={`#stage-${stage}`}>{STAGE_TITLES[stage]}</a>)}
-        <a href="#limits">LIMITS</a>
-      </nav>
     </header>
 
     <main>
@@ -117,16 +154,25 @@ const BLURBS: Record<StageId, string> = {
                 >
                   PLAY
                 </button>
-                <input
-                  class="player-scrubber"
-                  id={`scrub-${stage}`}
-                  type="range"
-                  min="0"
-                  max="0"
-                  value="0"
-                  step="1"
-                  aria-label={`${STAGE_TITLES[stage]} step`}
-                />
+                {/* A real range input, with its own track drawn behind it: the
+                    native one cannot be made to glide, and the input keeps the
+                    keyboard and the accessibility tree it was born with. */}
+                <div class="bar" id={`bar-${stage}`}>
+                  <input
+                    class="bar-input player-scrubber"
+                    id={`scrub-${stage}`}
+                    type="range"
+                    min="0"
+                    max="0"
+                    value="0"
+                    step="1"
+                    aria-label={`${STAGE_TITLES[stage]} step`}
+                  />
+                  <span class="bar-track" aria-hidden="true">
+                    <span class="bar-fill" />
+                    <span class="bar-head" />
+                  </span>
+                </div>
                 <p class="player-position" id={`pos-${stage}`}>STEP 1 / 1</p>
               </div>
               <div class="player-commentary" aria-live="polite">
@@ -210,6 +256,67 @@ const BLURBS: Record<StageId, string> = {
         </ul>
       </section>
     </main>
+
+    {/*
+      The dock: where you are, where else you can go, and the two settings that
+      belong to the page rather than to any one stage. It is fixed to the bottom
+      because the stages are long — the controls would otherwise be a scroll
+      away from whatever you were watching. Anchors, so it works with no
+      JavaScript; only the "you are here" marker needs any.
+    */}
+    <div class="dock" id="dock">
+      <nav class="dock-jumps" aria-label="Sections">
+        {
+          JUMPS.map((jump) => (
+            <a class="jump" href={`#${jump.id}`} data-jump={jump.id}>
+              {/* Both labels are always in the accessibility tree — the narrow
+                  one is only clipped, never removed — so a chip reading "3" is
+                  still announced as "3 Parse". Hiding the words outright left
+                  nine links with no name at all, and axe said so. */}
+              <span class="jump-short">{jump.short}</span>
+              <span class="jump-long">{jump.long}</span>
+            </a>
+          ))
+        }
+      </nav>
+
+      {/* Neither of these belongs to a stage: one speed drives all six players,
+          and the theme is the whole page. Both are remembered. */}
+      <div class="settings">
+        <div class="setting">
+          <label class="setting-label" for="speed">Speed</label>
+          <div class="bar bar-plain bar-short" id="bar-speed">
+            <input
+              class="bar-input setting-range"
+              id="speed"
+              type="range"
+              min="0"
+              max="5"
+              step="1"
+              value="2"
+            />
+            <span class="bar-track" aria-hidden="true">
+              <span class="bar-fill" />
+              <span class="bar-head" />
+            </span>
+          </div>
+          <output class="setting-value" id="speed-value" for="speed">×1</output>
+        </div>
+        <div class="setting">
+          <label class="setting-label" for="palette">Palette</label>
+          {/* A real <select>: it is a list of one-of-many, and the platform's
+              own control already knows how to be one on a phone. */}
+          <select class="setting-select" id="palette">
+            {
+              PALETTES.map((palette) => (
+                <option value={palette.id}>{palette.name}</option>
+              ))
+            }
+          </select>
+        </div>
+        <button class="setting-toggle" id="theme" type="button">LIGHT MODE</button>
+      </div>
+    </div>
 
     <noscript>
       <p>

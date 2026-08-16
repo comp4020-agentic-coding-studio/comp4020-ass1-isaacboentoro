@@ -1,7 +1,21 @@
 import { compile } from "../compiler/pipeline";
 import type { Compilation, Span, StageId } from "../compiler/types";
 import { PLAYERS } from "../compiler/types";
+import { type Region, pieces, regionsOf } from "./highlight";
 import { type BuiltPanes, buildPanes, buildRules } from "./panes";
+import { paletteFrom } from "./palettes";
+import {
+  DEFAULT_SPEED,
+  PALETTE_KEY,
+  SPEED_KEY,
+  SPEEDS,
+  THEME_KEY,
+  type Theme,
+  readStored,
+  speedFrom,
+  store,
+  themeFrom,
+} from "./prefs";
 import { DEFAULT_PRESET, PRESETS } from "./presets";
 import { clamp } from "./reveal";
 
@@ -17,8 +31,6 @@ import { clamp } from "./reveal";
  * mid-drag harmless.
  */
 
-/** One step per this long. The commentary is a sentence, so it has to be read. */
-const PLAY_INTERVAL_MS = 900;
 const COMPILE_DEBOUNCE_MS = 120;
 
 /**
@@ -35,6 +47,7 @@ type StagePlayer = {
   position: HTMLElement;
   title: HTMLElement;
   explain: HTMLElement;
+  bar: HTMLElement;
   echo: HTMLElement;
   rules: HTMLElement;
   body: HTMLElement;
@@ -52,15 +65,22 @@ export function start(): void {
   const source = required<HTMLTextAreaElement>("source");
   const mirror = required("mirror");
   const presets = required("presets");
+  const speed = required<HTMLInputElement>("speed");
+  const speedBar = required("bar-speed");
+  const speedValue = required("speed-value");
+  const theme = required<HTMLButtonElement>("theme");
+  const palette = required<HTMLSelectElement>("palette");
 
   let compilation: Compilation = compile(DEFAULT_PRESET.source);
   let built: BuiltPanes | undefined;
   let debounce: number | undefined;
+  let speedIndex = DEFAULT_SPEED;
 
   const players: StagePlayer[] = PLAYERS.map((stage) => ({
     stage,
     scrubber: required<HTMLInputElement>(`scrub-${stage}`),
     play: required<HTMLButtonElement>(`play-${stage}`),
+    bar: required(`bar-${stage}`),
     position: required(`pos-${stage}`),
     title: required(`title-${stage}`),
     explain: required(`explain-${stage}`),
@@ -150,6 +170,7 @@ export function start(): void {
     const steps = trace?.steps.length ?? 0;
     player.cursor = clamp(next, steps);
     player.scrubber.value = String(player.cursor);
+    setProgress(player.bar, player.cursor, steps - 1);
     render(player);
   }
 
@@ -193,22 +214,65 @@ export function start(): void {
 
   // -------------------------------------------------------------- highlighting
 
-  /** Rebuild a source echo with one span marked. Text nodes only, never HTML. */
+  /**
+   * The syntax regions for the current source, worked out once per compile
+   * rather than once per paint: every stage repaints its echo on every step, so
+   * this runs far more often than the compiler does.
+   */
+  let litSource: string | undefined;
+  let litRegions: Region[] = [];
+
+  function syntax(): Region[] {
+    if (litSource !== compilation.source) {
+      litSource = compilation.source;
+      litRegions = regionsOf(litSource);
+    }
+    return litRegions;
+  }
+
+  /**
+   * Rebuild a source echo: the C highlighted, with the step's span marked.
+   * Text nodes only, never HTML — the source is the visitor's own input.
+   *
+   * The marked span is one `<mark>` with the highlighted pieces inside it, and
+   * inside it they inherit the accent's colour: "here" is one colour, so syntax
+   * never competes with it.
+   */
   function paint(target: HTMLElement, span: Span | null): void {
     const text = compilation.source;
     target.replaceChildren();
+
     const covers = span ? (span.end - span.start) / Math.max(1, text.length) : 0;
-    if (!span || span.end <= span.start || covers > WHOLE_FILE_SHARE) {
-      target.append(document.createTextNode(text));
-      return;
+    const marking =
+      span && span.end > span.start && covers <= WHOLE_FILE_SHARE
+        ? {
+            start: Math.min(span.start, text.length),
+            end: Math.min(span.end, text.length),
+          }
+        : null;
+
+    let mark: HTMLElement | undefined;
+    const parentFor = (at: number): HTMLElement => {
+      if (!marking || at < marking.start || at >= marking.end) return target;
+      if (!mark) {
+        mark = document.createElement("mark");
+        target.append(mark);
+      }
+      return mark;
+    };
+
+    for (const piece of pieces(text.length, syntax(), marking)) {
+      const parent = parentFor(piece.start);
+      const content = text.slice(piece.start, piece.end);
+      if (piece.kind === undefined) {
+        parent.append(document.createTextNode(content));
+        continue;
+      }
+      const node = document.createElement("span");
+      node.className = `tok tok-${piece.kind}`;
+      node.textContent = content;
+      parent.append(node);
     }
-    const start = Math.min(span.start, text.length);
-    const end = Math.min(span.end, text.length);
-    target.append(document.createTextNode(text.slice(0, start)));
-    const mark = document.createElement("mark");
-    mark.textContent = text.slice(start, end);
-    target.append(mark);
-    target.append(document.createTextNode(text.slice(end)));
   }
 
   function highlightEcho(player: StagePlayer, span: Span | null): void {
@@ -268,7 +332,109 @@ export function start(): void {
         return;
       }
       setCursor(player, player.cursor + 1);
-    }, PLAY_INTERVAL_MS);
+    }, SPEEDS[speedIndex].ms);
+  }
+
+  // ----------------------------------------------------------------- settings
+
+  /**
+   * Speed is one setting for all six players: it is a reading rate, not stage
+   * state, so a stage never owns it. Changing it while something is playing
+   * restarts that player's interval at the new period and leaves its cursor
+   * exactly where it was — the rate changed, not the position.
+   */
+  function applySpeed(index: number, remember: boolean): void {
+    speedIndex = index;
+    speed.value = String(index);
+    setProgress(speedBar, index, SPEEDS.length - 1);
+    const label = `×${SPEEDS[index].label}`;
+    speedValue.textContent = label;
+    // Without this a screen reader reads the raw index, which means nothing.
+    speed.setAttribute("aria-valuetext", `${label}, ${SPEEDS[index].ms}ms per step`);
+    if (remember) store(SPEED_KEY, String(index));
+    for (const player of players) {
+      if (!playing(player)) continue;
+      stop(player);
+      play(player);
+    }
+  }
+
+  /**
+   * Mark the dock chip for whatever section is on screen.
+   *
+   * An observer, not a scroll handler: the browser already knows what is
+   * visible, and asking it on every scroll event would mean measuring layout
+   * from script dozens of times a second. The chip nearest the top of the
+   * viewport wins, so scrolling down hands "here" over one section at a time.
+   *
+   * Purely decorative — the links work without it, and without an observer at
+   * all — so it is wrapped rather than assumed.
+   */
+  function watchSections(): void {
+    const jumps = [...document.querySelectorAll<HTMLElement>("[data-jump]")];
+    if (jumps.length === 0 || typeof IntersectionObserver === "undefined") return;
+
+    const onScreen = new Set<string>();
+    const mark = () => {
+      // Two sections can be in the band at once, at the seam between them. The
+      // one you have most recently arrived in is the one whose top is furthest
+      // down — taking the first in document order instead marked the section you
+      // were leaving, which is exactly backwards.
+      let here: HTMLElement | undefined;
+      let best = Number.NEGATIVE_INFINITY;
+      for (const jump of jumps) {
+        const id = jump.dataset.jump ?? "";
+        if (!onScreen.has(id)) continue;
+        const top = document.getElementById(id)?.getBoundingClientRect().top ?? 0;
+        if (top >= best) {
+          best = top;
+          here = jump;
+        }
+      }
+      for (const jump of jumps) jump.classList.toggle("is-here", jump === here);
+    };
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) onScreen.add(entry.target.id);
+          else onScreen.delete(entry.target.id);
+        }
+        mark();
+      },
+      // A band across the top of the viewport: "here" is what you are reading,
+      // not everything the screen happens to touch.
+      { rootMargin: "0px 0px -70% 0px" },
+    );
+
+    for (const jump of jumps) {
+      const section = document.getElementById(jump.dataset.jump ?? "");
+      if (section) observer.observe(section);
+    }
+  }
+
+  /**
+   * The palette is the whole document's, like the theme — and like the theme it
+   * is only an attribute: every colour on the page is a custom property, so
+   * changing one word restyles all six stages without touching a pane.
+   *
+   * The ids come from the select's own options rather than from the palette
+   * data, which keeps the colour tables out of the bundle entirely.
+   */
+  function applyPalette(id: string, remember: boolean): void {
+    const known = [...palette.options].map((option) => option.value);
+    const next = paletteFrom(id, known);
+    document.documentElement.dataset.palette = next;
+    palette.value = next;
+    if (remember) store(PALETTE_KEY, next);
+  }
+
+  function applyTheme(next: Theme, remember: boolean): void {
+    document.documentElement.dataset.theme = next;
+    // The button says what pressing it will do, which is why it is not a
+    // toggle button with a fixed name and a pressed state.
+    theme.textContent = next === "light" ? "DARK MODE" : "LIGHT MODE";
+    if (remember) store(THEME_KEY, next);
   }
 
   // ------------------------------------------------------------------- events
@@ -293,6 +459,21 @@ export function start(): void {
     });
   }
 
+  speed.addEventListener("input", () => {
+    applySpeed(speedFrom(speed.value), true);
+  });
+
+  palette.addEventListener("change", () => {
+    applyPalette(palette.value, true);
+  });
+
+  theme.addEventListener("click", () => {
+    applyTheme(
+      document.documentElement.dataset.theme === "light" ? "dark" : "light",
+      true,
+    );
+  });
+
   source.addEventListener("input", () => {
     if (debounce !== undefined) window.clearTimeout(debounce);
     debounce = window.setTimeout(() => recompile(), COMPILE_DEBOUNCE_MS);
@@ -303,8 +484,30 @@ export function start(): void {
     mirror.scrollLeft = source.scrollLeft;
   });
 
+  // The head already set the theme from the same rule, before first paint; this
+  // only puts the button's label in step with it.
+  applyTheme(
+    themeFrom(
+      readStored(THEME_KEY),
+      window.matchMedia?.("(prefers-color-scheme: light)").matches ?? false,
+    ),
+    false,
+  );
+  applySpeed(speedFrom(readStored(SPEED_KEY)), false);
+  applyPalette(readStored(PALETTE_KEY) ?? "", false);
+  watchSections();
+
   source.value = DEFAULT_PRESET.source;
   recompile();
+}
+
+/**
+ * Where a bar stands, as a number from 0 to 1. The CSS turns it into a scale and
+ * a translate, so moving a cursor costs no layout and the bar glides instead of
+ * jumping. This is state, not layout: nothing here reads a size back.
+ */
+function setProgress(bar: HTMLElement, at: number, of: number): void {
+  bar.style.setProperty("--progress", String(of > 0 ? at / of : 0));
 }
 
 function text(tag: string, className: string, content: string): HTMLElement {

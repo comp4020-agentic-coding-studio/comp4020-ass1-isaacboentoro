@@ -4,6 +4,8 @@ import { JSDOM } from "jsdom";
 import { describe, expect, it } from "vitest";
 import { STAGE_IO } from "../src/compiler/stages";
 import { PLAYERS, STAGES, STAGE_TITLES } from "../src/compiler/types";
+import { PALETTES } from "../src/ui/palettes";
+import { PALETTE_KEY, SPEEDS, THEME_KEY } from "../src/ui/prefs";
 
 /**
  * What has to be true of the SHIPPED page, over and above the invariants.
@@ -145,6 +147,115 @@ describe("every stage's controls are really in the markup", () => {
       });
     });
   }
+});
+
+describe("the dock", () => {
+  const dock = document.getElementById("dock");
+
+  it("is one bar holding the jumps and all three settings", () => {
+    expect(dock).toBeTruthy();
+    expect(dock?.querySelector("nav")).toBeTruthy();
+    expect(dock?.querySelector("#speed")).toBeTruthy();
+    expect(dock?.querySelector("#palette")).toBeTruthy();
+    expect(dock?.querySelector("#theme")).toBeTruthy();
+  });
+
+  it("can reach every section, and every link lands somewhere real", () => {
+    const jumps = [...(dock?.querySelectorAll<HTMLAnchorElement>("[data-jump]") ?? [])];
+    const targets = jumps.map((jump) => jump.dataset.jump);
+    for (const stage of PLAYERS) expect(targets).toContain(`stage-${stage}`);
+    expect(targets).toContain("source-section");
+    expect(targets).toContain("limits");
+
+    for (const jump of jumps) {
+      // A dead anchor is a dead end the links check would not catch, since it
+      // never leaves the page.
+      expect(document.getElementById(jump.dataset.jump ?? ""), jump.href).toBeTruthy();
+      expect(jump.getAttribute("href")).toBe(`#${jump.dataset.jump}`);
+    }
+  });
+
+  it("names each jump for a screen reader, whichever label is showing", () => {
+    // A chip reads "3" on a phone, so the word has to stay in the tree beside
+    // it: CSS clips whichever label is not showing, and neither is ever removed
+    // or hidden with aria. Nine unnamed links is what the other way looked like.
+    for (const jump of dock?.querySelectorAll("[data-jump]") ?? []) {
+      const short = jump.querySelector(".jump-short");
+      const long = jump.querySelector(".jump-long");
+      expect(short?.hasAttribute("aria-hidden")).toBe(false);
+      expect(long?.hasAttribute("aria-hidden")).toBe(false);
+      expect(long?.textContent?.trim().length).toBeGreaterThan(2);
+      expect(jump.textContent?.trim().length).toBeGreaterThan(2);
+    }
+  });
+
+  it("leaves nothing behind in the old top bar", () => {
+    const topbar = document.querySelector(".topbar");
+    expect(topbar?.querySelector("nav")).toBeNull();
+    expect(topbar?.querySelector("#speed")).toBeNull();
+    // One nav landmark, in one place, so "Sections" means one list.
+    expect(document.querySelectorAll("nav")).toHaveLength(1);
+  });
+});
+
+describe("the page's own settings", () => {
+  it("has one speed control for all six players, not one each", () => {
+    const speed = document.querySelector("#speed");
+    expect(speed?.getAttribute("type")).toBe("range");
+    expect(document.querySelector('label[for="speed"]')?.textContent).toBeTruthy();
+    // The range's stops are the rates in prefs.ts; a mismatch would let the
+    // slider ask for a speed that does not exist.
+    expect(speed?.getAttribute("min")).toBe("0");
+    expect(speed?.getAttribute("max")).toBe(String(SPEEDS.length - 1));
+    expect(document.querySelectorAll('input[type="range"][id^="speed"]')).toHaveLength(1);
+  });
+
+  it("has a theme toggle that says what pressing it will do", () => {
+    const toggle = document.querySelector("#theme");
+    expect(toggle?.tagName).toBe("BUTTON");
+    expect(toggle?.getAttribute("type")).toBe("button");
+    expect(toggle?.textContent?.trim()).toMatch(/MODE$/);
+  });
+
+  it("offers every palette, by name, in a real select", () => {
+    const select = document.querySelector<HTMLSelectElement>("#palette");
+    expect(select?.tagName).toBe("SELECT");
+    expect(document.querySelector('label[for="palette"]')?.textContent).toBeTruthy();
+    const options = [...(select?.querySelectorAll("option") ?? [])];
+    expect(options.map((option) => option.getAttribute("value"))).toEqual(
+      PALETTES.map((palette) => palette.id),
+    );
+    expect(options.map((option) => option.textContent?.trim())).toEqual(
+      PALETTES.map((palette) => palette.name),
+    );
+  });
+
+  it("ships every palette's colours in the document itself", () => {
+    // Inline in the head, so the first paint is already the right colours — a
+    // stylesheet request later would be a flash of the wrong palette.
+    const head = /<head[\s\S]*?<\/head>/.exec(html)?.[0] ?? "";
+    for (const palette of PALETTES) {
+      expect(head).toContain(`:root[data-palette="${palette.id}"]{`);
+      expect(head).toContain(palette.dark.bg);
+      expect(head).toContain(palette.light.bg);
+    }
+    // And nothing outside the head is allowed to define them, or two sources of
+    // truth start disagreeing.
+    expect(html.split(':root[data-palette="brutalist"]{').length - 1).toBe(1);
+  });
+
+  it("settles the theme in the head, before the page paints", () => {
+    // Reading it in the deferred bundle instead would show the wrong theme for
+    // a frame on every load, which is the whole reason this script is inline.
+    const head = /<head[\s\S]*?<\/head>/.exec(html)?.[0] ?? "";
+    expect(head).toContain(THEME_KEY);
+    expect(head).toContain("prefers-color-scheme: light");
+    // The palette is settled there too, from the same storage.
+    expect(head).toContain(PALETTE_KEY);
+    // That inline copy cannot import prefs.ts, so the key it uses is pinned
+    // here: drift would silently split the stored preference in two.
+    expect(html.split(THEME_KEY).length - 1).toBeGreaterThan(0);
+  });
 });
 
 describe("the editor", () => {

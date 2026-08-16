@@ -1,9 +1,17 @@
 // @vitest-environment jsdom
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { compile } from "../src/compiler/pipeline";
 import { PLAYERS, STAGES } from "../src/compiler/types";
+import { DEFAULT_PALETTE, PALETTES } from "../src/ui/palettes";
+import {
+  DEFAULT_SPEED,
+  PALETTE_KEY,
+  SPEEDS,
+  SPEED_KEY,
+  THEME_KEY,
+} from "../src/ui/prefs";
 import { PRESETS } from "../src/ui/presets";
 import { clamp, traceOf, tracesOf, visibleIn } from "../src/ui/reveal";
 
@@ -149,8 +157,34 @@ describe("every preset", () => {
   }
 });
 
+/**
+ * jsdom under this Node gives the window no `localStorage` at all, so the two
+ * remembered preferences would have nothing to be remembered in. The app copes
+ * with that on purpose — storage throws in a sandboxed frame too — but a test
+ * that cannot store cannot check that it stored, so here is a plain one.
+ */
+function fakeStorage(): void {
+  if (window.localStorage) return;
+  const kept = new Map<string, string>();
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key: string) => kept.get(key) ?? null,
+      setItem: (key: string, value: string) => void kept.set(key, String(value)),
+      removeItem: (key: string) => void kept.delete(key),
+      clear: () => kept.clear(),
+      key: (index: number) => [...kept.keys()][index] ?? null,
+      get length() {
+        return kept.size;
+      },
+    },
+  });
+}
+
 describe("the page, driven", () => {
   beforeEach(async () => {
+    fakeStorage();
+    window.localStorage.clear();
     const html = readFileSync(HOME, "utf8");
     // Only the body markup: the bundled <script> must not run here, since this
     // test imports the module itself.
@@ -178,6 +212,175 @@ describe("the page, driven", () => {
     const pane = document.getElementById(`pane-${stage}`);
     return pane?.querySelectorAll("[data-reveal].is-shown").length ?? 0;
   }
+
+  afterEach(() => {
+    vi.useRealTimers();
+    window.localStorage.clear();
+  });
+
+  function setSpeed(index: number): void {
+    const speed = document.getElementById("speed") as HTMLInputElement;
+    speed.value = String(index);
+    speed.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  it("plays at the rate the speed control asks for", () => {
+    vi.useFakeTimers();
+    const slowest = 0;
+    const fastest = SPEEDS.length - 1;
+
+    setSpeed(slowest);
+    scrubTo("scan", 0);
+    playButton("scan").click();
+    // One tick short of the slow period: a step here would mean the control did
+    // nothing, which is how this looked before the rate was wired up.
+    vi.advanceTimersByTime(SPEEDS[slowest].ms - 50);
+    expect(Number(scrubber("scan").value)).toBe(0);
+    vi.advanceTimersByTime(100);
+    expect(Number(scrubber("scan").value)).toBe(1);
+    playButton("scan").click();
+
+    setSpeed(fastest);
+    scrubTo("scan", 0);
+    playButton("scan").click();
+    vi.advanceTimersByTime(SPEEDS[fastest].ms * 3);
+    expect(Number(scrubber("scan").value)).toBe(3);
+    playButton("scan").click();
+  });
+
+  it("changes speed mid-play without losing the cursor or stopping", () => {
+    vi.useFakeTimers();
+    setSpeed(0);
+    scrubTo("scan", 0);
+    playButton("scan").click();
+    vi.advanceTimersByTime(SPEEDS[0].ms);
+    expect(Number(scrubber("scan").value)).toBe(1);
+
+    setSpeed(SPEEDS.length - 1);
+    // The rate changed, not the position — and it is still playing.
+    expect(Number(scrubber("scan").value)).toBe(1);
+    expect(playButton("scan").getAttribute("aria-pressed")).toBe("true");
+    vi.advanceTimersByTime(SPEEDS[SPEEDS.length - 1].ms);
+    expect(Number(scrubber("scan").value)).toBe(2);
+    playButton("scan").click();
+  });
+
+  function progressOf(id: string): number {
+    const bar = document.getElementById(id) as HTMLElement;
+    return Number(bar.style.getPropertyValue("--progress"));
+  }
+
+  it("moves each bar with its own cursor, as a fraction", () => {
+    // The bar is drawn from this one number, so if it is wrong the bar lies
+    // about where the stage is even though the input is right.
+    const max = Number(scrubber("scan").max);
+    scrubTo("scan", 0);
+    expect(progressOf("bar-scan")).toBe(0);
+    scrubTo("scan", max);
+    expect(progressOf("bar-scan")).toBe(1);
+    scrubTo("scan", Math.round(max / 2));
+    expect(progressOf("bar-scan")).toBeCloseTo(Math.round(max / 2) / max, 5);
+  });
+
+  it("leaves every other bar where it was", () => {
+    scrubTo("parse", 0);
+    const before = progressOf("bar-parse");
+    scrubTo("scan", Number(scrubber("scan").max));
+    expect(progressOf("bar-parse")).toBe(before);
+  });
+
+  it("keeps a bar with nothing to play at zero rather than at NaN", () => {
+    // A stage that never ran has max 0, and 0/0 would paint the whole bar full.
+    vi.useFakeTimers();
+    const broken = document.getElementById("source") as HTMLTextAreaElement;
+    broken.value = "int main() { return nope; }";
+    broken.dispatchEvent(new Event("input", { bubbles: true }));
+    // Editing is debounced, so the compile only happens once the clock moves.
+    vi.advanceTimersByTime(200);
+    vi.useRealTimers();
+    expect(Number(scrubber("codegen").max)).toBe(0);
+    expect(progressOf("bar-codegen")).toBe(0);
+  });
+
+  it("moves the speed bar with the speed", () => {
+    setSpeed(0);
+    expect(progressOf("bar-speed")).toBe(0);
+    setSpeed(SPEEDS.length - 1);
+    expect(progressOf("bar-speed")).toBe(1);
+  });
+
+  it("opens at 1×, the rate the commentary was written for", () => {
+    // `Number(null)` is 0, which is a real index, so a first visit used to open
+    // at half speed. The screenshot said so before any test did.
+    const speed = document.getElementById("speed") as HTMLInputElement;
+    expect(Number(speed.value)).toBe(DEFAULT_SPEED);
+    expect(SPEEDS[DEFAULT_SPEED].label).toBe("1");
+    expect(document.getElementById("speed-value")?.textContent).toBe("×1");
+  });
+
+  it("drives all six players from the one speed, and remembers it", () => {
+    expect(document.querySelectorAll('[id^="speed"]')).toHaveLength(2); // range + reading
+    setSpeed(4);
+    expect(window.localStorage.getItem(SPEED_KEY)).toBe("4");
+    expect(document.getElementById("speed-value")?.textContent).toBe(
+      `×${SPEEDS[4].label}`,
+    );
+    // The reading is for eyes; a screen reader needs the value spoken too.
+    expect(
+      document.getElementById("speed")?.getAttribute("aria-valuetext"),
+    ).toContain(SPEEDS[4].label);
+  });
+
+  it("dresses the whole document in the chosen palette, and remembers", async () => {
+    const select = document.getElementById("palette") as HTMLSelectElement;
+    const chosen = PALETTES.find((palette) => palette.id !== DEFAULT_PALETTE);
+    select.value = chosen?.id ?? "";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+
+    // One attribute on <html> is the whole change: every colour is a custom
+    // property, so no pane is touched and no cursor moves.
+    expect(document.documentElement.dataset.palette).toBe(chosen?.id);
+    expect(window.localStorage.getItem(PALETTE_KEY)).toBe(chosen?.id);
+
+    // A palette that no longer exists must not leave the page colourless.
+    window.localStorage.setItem(PALETTE_KEY, "solarised-neon");
+    const { start } = await import("../src/ui/app");
+    start();
+    expect(document.documentElement.dataset.palette).toBe(DEFAULT_PALETTE);
+    expect(select.value).toBe(DEFAULT_PALETTE);
+  });
+
+  it("keeps the palette and the theme independent", () => {
+    const select = document.getElementById("palette") as HTMLSelectElement;
+    const toggle = document.getElementById("theme") as HTMLButtonElement;
+    const other = PALETTES.find((palette) => palette.id !== DEFAULT_PALETTE);
+    select.value = other?.id ?? "";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    const before = document.documentElement.dataset.theme;
+
+    toggle.click();
+    expect(document.documentElement.dataset.theme).not.toBe(before);
+    // Switching light and dark must not throw the palette away, and vice versa.
+    expect(document.documentElement.dataset.palette).toBe(other?.id);
+  });
+
+  it("toggles the theme, says what it will do next, and remembers", async () => {
+    const toggle = document.getElementById("theme") as HTMLButtonElement;
+    const before = document.documentElement.dataset.theme;
+    toggle.click();
+    const after = document.documentElement.dataset.theme;
+    expect(after).not.toBe(before);
+    expect(after === "light" || after === "dark").toBe(true);
+    expect(toggle.textContent).toBe(after === "light" ? "DARK MODE" : "LIGHT MODE");
+    expect(window.localStorage.getItem(THEME_KEY)).toBe(after);
+
+    // A stored choice survives a reload, and beats the system preference.
+    window.localStorage.setItem(THEME_KEY, "light");
+    const { start } = await import("../src/ui/app");
+    start();
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(toggle.textContent).toBe("DARK MODE");
+  });
 
   it("builds a player for every section", () => {
     for (const stage of PLAYERS) {
@@ -313,6 +516,32 @@ describe("the page, driven", () => {
     const marked = echo?.querySelector("mark")?.textContent ?? "";
     const source = (document.getElementById("source") as HTMLTextAreaElement).value;
     expect(marked.length / source.length).toBeLessThan(0.6);
+  });
+
+  it("shows the same source it was given, highlighted", () => {
+    // Colouring the C must not add, drop or reorder a character: the echo and
+    // the editor mirror are what the reader compares against what they typed.
+    const source = (document.getElementById("source") as HTMLTextAreaElement).value;
+    scrubTo("scan", 4);
+    for (const id of ["mirror", "echo-scan", "echo-parse", "echo-codegen"]) {
+      expect(document.getElementById(id)?.textContent, id).toBe(source);
+    }
+    const keywords = document.querySelectorAll("#echo-scan .tok-keyword");
+    expect(keywords.length).toBeGreaterThan(0);
+    for (const token of keywords) expect(source).toContain(token.textContent ?? "");
+  });
+
+  it("keeps the accent alone inside a highlight", () => {
+    // Syntax colour is the one other place hue is used, so it must not compete
+    // with the marker: tokens inside a mark set no colour of their own.
+    scrubTo("scan", 1);
+    const mark = document.getElementById("echo-scan")?.querySelector("mark");
+    expect(mark?.textContent?.length).toBeGreaterThan(0);
+    // One mark per step: "here" is one place.
+    expect(document.querySelectorAll("#echo-scan mark")).toHaveLength(1);
+    for (const token of mark?.querySelectorAll("[class*='tok-']") ?? []) {
+      expect((token as HTMLElement).style.color).toBe("");
+    }
   });
 
   it("moving one stage does not move another stage's highlight", () => {

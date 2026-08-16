@@ -76,6 +76,118 @@ these, and each one is here because breaking it cost me something.
 - **The accent colour means "here" and nothing else.** The current step and the
   source it is reading. Never decoration, never a third meaning. Square corners,
   thick rules, monospace: if a change would soften the page, it is wrong.
+- **Syntax colour is the one other use of hue, and it gets out of the accent's
+  way.** `highlight.ts` classifies the ORIGINAL source — comments and directives
+  included, which is why it cannot be `scan()`, since both are gone by the time
+  the scanner runs — and its keyword set is imported from the lexer so the page
+  can never colour a word as reserved that the compiler treats as a name.
+  Identifiers are left uncoloured on purpose. Inside a `mark`, tokens inherit the
+  accent's colour rather than setting their own, so "here" stays one colour and
+  the text stays readable on yellow. Every syntax colour clears 4.5:1 on black;
+  `pnpm shoot`'s axe pass is what says so.
+- **A palette is data, and `palettes.ts` is the only place colour values live.**
+  `global.css` names tokens and never sets a hex; the palettes are emitted into
+  the document head at build time, so the first paint is already the right
+  colours and there is one source of truth rather than blocks scattered through
+  the stylesheet. A palette is one attribute on `<html>`: switching it restyles
+  all six stages without touching a pane or moving a cursor.
+- **Borrowed palettes get checked, not trusted.** Upstream colours are tuned for
+  an editor, not for body text on a page: Dracula's comment is 3.0:1 on its own
+  background, Tokyo Night's 2.8:1. Each is nudged along its own hue until it
+  clears 4.5:1, and the comment above every variant says which token moved and
+  from what. `spec/palettes.test.ts` re-derives every ratio — text on background,
+  ink on background, whatever sits on the accent — so adding a palette means
+  adding it and reading the failures. `pnpm shoot` then wears every palette in
+  both modes and runs axe on the real page, which is what caught the one thing
+  the token test could not see: `code` chips filled with `--dimmer` put text on a
+  pair no test was checking, and it came in under 4.5:1 in three light palettes.
+  Chips are bordered now, so their text sits on the page's own background.
+- **Two themes, so two sets of contrast ratios.** `--accent` is the highlight
+  fill, `--accent-ink` is the accent used as text or border (it darkens on white,
+  since a yellow letter there is invisible), and `--on-accent` is what sits ON
+  the fill — black in both modes. Writing `color: var(--bg)` on an accent
+  background is the bug that keeps coming back: it reads black in dark mode and
+  white-on-yellow in light. `pnpm shoot` presses the real toggle and runs axe a
+  second time, which is how both light-mode failures were found rather than
+  guessed at. Colours transition, so it waits for the fade before measuring —
+  axe reads whatever is on screen at that instant, half-way colours included.
+- **The dock floats at the edges but never over the content.** It is a slab inset
+  on all four sides with a hard offset shadow — no blur, this page casts shadows
+  like a woodblock or not at all. Floating is about the edges: `--dock`
+  (`--dock-height` plus both gaps) still comes out of `body` padding and the
+  sticky stage column, so the last caveat never ends up underneath it.
+  `pnpm shoot` fails if the bar is flush with the bottom *or* more than a gap
+  away from it, which is the check that says "floating" rather than "fixed".
+- **At a seam, "here" is the section you have arrived in.** Two sections can be
+  in the scroll-spy band at once; take the one whose top is furthest down, not
+  the first in document order — the latter marks the section you are leaving.
+  There is a check that jumps to a stage and fails if the dock names its
+  neighbour.
+  It holds the section jumps and the two page settings, and it is the only nav on
+  the page — the top bar is just the `h1` now. On a phone it becomes two rows and
+  `--dock` grows to match; in one row the settings ate the width and the jumps
+  collapsed to nothing, which from a screenshot looked like a dock with no jumps.
+  "Where you are" is inverted, not accented: the accent already means the step a
+  stage is standing on.
+- **Hide a label by clipping it, not by removing it.** The chips read "3" on a
+  phone and "Parse" on a desktop; whichever is not showing is clipped, so it
+  stays in the accessibility tree and every link has a name at every width.
+  `display: none` on the words left nine links with no accessible name at all,
+  and only the axe pass at 390px caught it. In `shoot`, click an anchor through
+  `el.click()` rather than a coordinate — the dock is fixed and its chips scroll
+  sideways, so a point click silently misses and the check quietly measures the
+  wrong thing.
+- **The bars are ours; the input underneath is still the platform's.** Every
+  slider is a real `<input type="range">` made invisible on top of a track drawn
+  in CSS — giving the input up would cost the keyboard, the arrow keys and the
+  accessibility tree. Position is one custom property, `--progress` from 0 to 1,
+  set in `setCursor` and `applySpeed`; the fill is a `scaleX` and the head a
+  `translateX`, so a step costs no layout and the bar glides. The head is a
+  full-width element translated by `calc(var(--progress) * (100% - var(--head)))`
+  — the percentage resolves against its own width, which is how it lands exactly
+  on the end without script measuring anything — so `.bar-track` must clip, or
+  the overhang becomes a screenful of horizontal scroll. Suppress the browser's
+  own focus ring on the input: the ring belongs on the track, or the bar wears
+  two rectangles. And light mode is paper, not white — pure white behind this
+  much rule and monospace glares.
+- **`*` does not match pseudo-elements.** The `box-sizing` reset read `*` for
+  months, so every `::before` was sizing content-box while the rest of the page
+  was border-box. The bar's head, told `width: var(--head)`, was two border
+  widths wider than that, and the extra hung past the clip — so a finished bar
+  lost the right edge of its marker. The reset is `*, *::before, *::after` now,
+  as the reduced-motion switch already was.
+- **A clipped border is a question about pixels, not about geometry.** The box
+  was in the right place either way, so no rect check could see it. `pnpm shoot`
+  screenshots the end of a finished bar and reads one row across it — page,
+  border, fill, border, page — and fails if the fill is not fenced on both
+  sides. Allow a blended pixel at each edge; the screenshot is antialiased.
+- **A headless page only advances a transition when something asks for a
+  frame.** Reading a transform mid-glide in `shoot` measures wherever the bar
+  happened to be, which is nowhere in particular. Emulate reduced motion for
+  the measurement — the position worth checking is the settled one.
+- **Let the page settle before measuring it.** axe reads whatever is painted at
+  that instant, so sampling mid-transition reports contrast failures that do not
+  exist a frame later. `pnpm shoot` waits before each scan. A flaky sensor gets
+  ignored, and an ignored sensor is worse than none.
+- **Preferences are the page's, not a stage's.** Play speed is one bar for all
+  six players and the theme is the whole document, so neither lives in
+  `StagePlayer`. Both are remembered through `prefs.ts`, and remembering is
+  best-effort: `localStorage` throws in a sandboxed frame, and a preference is
+  never worth a page that will not start. Changing speed mid-play restarts the
+  interval and leaves the cursor alone — the rate changed, not the position.
+- **The theme is settled in the head, before first paint.** An inline script in
+  `index.astro` applies the stored choice or the system preference; doing it from
+  the bundle would flash the wrong theme on every load. That copy cannot import
+  `prefs.ts`, so `spec/page.test.ts` pins the storage key in both places.
+- **A default that is also a valid value needs its own guard.** `Number(null)`
+  and `Number("")` are both 0, which is a real speed index, so the first visit
+  quietly opened at ×0.5. Tests all passed; the screenshot is what caught it.
+  Look at the page.
+- **Colouring the source must not change the source.** `pieces()` cuts the text
+  on both syntax boundaries and the marked span's edges, so a token straddling
+  the highlight splits instead of one of them swallowing the other. The tests
+  that matter assert the painted echo's `textContent` is still exactly the
+  source, character for character.
 - **Layout in CSS, state in JavaScript.** Never resize or reflow by script. The
   marker resizes mid-interaction, and the cursor has to survive it.
 - **Every artefact's span points into the original source.** Not the preprocessed

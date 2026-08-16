@@ -21,6 +21,7 @@ import { createRequire } from "node:module";
 import { extname, join, normalize, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import puppeteer from "puppeteer-core";
+import sharp from "sharp";
 
 const DIST = resolve("dist");
 const OUT = resolve(".screens");
@@ -149,6 +150,94 @@ async function axeScan(page: Page): Promise<Violation[]> {
   });
 }
 
+/**
+ * Is the head of a finished bar drawn in full?
+ *
+ * Its right border is one rule wide and lands exactly on the end of the track,
+ * which is clipped — so this is a question about pixels, and geometry cannot
+ * answer it: the box is in the right place either way. Screenshot the end of the
+ * bar and walk one row: background, border, accent fill, border, background. A
+ * missing last border is the bug this exists for.
+ */
+async function headIsWhole(
+  page: Page,
+  stage: string,
+): Promise<{ ok: boolean; row: string }> {
+  /*
+   * Transitions are compositor-driven, and a headless page only advances them
+   * when something asks for a frame — so a bar caught mid-glide would be
+   * measured wherever it happened to be. Turn motion off for the measurement:
+   * the position we care about is the settled one.
+   */
+  await page.emulateMediaFeatures([
+    { name: "prefers-reduced-motion", value: "reduce" },
+  ]);
+  await page.evaluate(
+    () =>
+      new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+  );
+
+  const geometry = await page.$eval(`#bar-${stage}`, (node) => {
+    const track = node.querySelector(".bar-track");
+    const head = node.querySelector(".bar-head");
+    if (!track || !head) return null;
+    const box = track.getBoundingClientRect();
+    return {
+      right: box.right,
+      top: box.top,
+      height: box.height,
+      square: Number.parseFloat(getComputedStyle(head, "::before").width),
+    };
+  });
+  if (!geometry) return { ok: false, row: "no bar" };
+  const restore = async () =>
+    page.emulateMediaFeatures([
+      { name: "prefers-reduced-motion", value: "no-preference" },
+    ]);
+
+  const pad = 6;
+  const width = Math.ceil(geometry.square + pad * 2);
+  const shot = await page.screenshot({
+    clip: {
+      x: Math.max(0, Math.floor(geometry.right - geometry.square - pad)),
+      y: Math.floor(geometry.top),
+      width,
+      height: Math.ceil(geometry.height),
+    },
+  });
+
+  await restore();
+
+  const { data, info } = await sharp(Buffer.from(shot))
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const middle = Math.floor(info.height / 2);
+  const pixels: string[] = [];
+  for (let x = 0; x < info.width; x += 1) {
+    const at = (middle * info.width + x) * info.channels;
+    const [r, g, b] = [data[at], data[at + 1], data[at + 2]];
+    // Three things can be here: the yellow fill, the border, or the page.
+    const kind = g > 200 && b < 120 ? "accent" : r > 200 && g > 200 && b > 200 ? "rule" : "page";
+    pixels.push(kind);
+  }
+  // "page rule accent rule page", with runs collapsed, is what a whole head
+  // looks like from the side.
+  const row = pixels
+    .map((kind) => kind[0])
+    .join("")
+    .replace(/(.)\1+/g, "$1");
+  // The fill must be fenced by the border on both sides.
+  const accentStart = pixels.indexOf("accent");
+  const accentEnd = pixels.lastIndexOf("accent");
+  // Edges are antialiased, so a blended pixel can sit between the fill and its
+  // border: look at the next couple rather than demanding the very next one.
+  const fenced = (from: number, step: number) =>
+    [1, 2, 3].some((away) => pixels[from + away * step] === "rule");
+  const ok =
+    accentStart > 0 && accentEnd > 0 && fenced(accentStart, -1) && fenced(accentEnd, 1);
+  return { ok, row };
+}
+
 /** How many of a stage's artefacts are currently revealed. */
 function shownIn(page: Page, stage: string): Promise<number> {
   return page.$$eval(
@@ -205,7 +294,10 @@ async function main(): Promise<void> {
   }
 
   for (const viewport of VIEWPORTS) {
-    const page = await browser.newPage();
+    // Its own browser context, so the remembered theme from the last viewport
+    // does not decide what this one loads with.
+    const context = await browser.createBrowserContext();
+    const page = await context.newPage();
     const note = (message: string) => problems.push(`[${viewport.name}] ${message}`);
     await page.setViewport({ width: viewport.width, height: viewport.height });
 
@@ -257,6 +349,21 @@ async function main(): Promise<void> {
       if (!everMarked) note(`${stage}: never highlights source in its own echo`);
       await scrubTo(page, stage, 0);
     }
+
+    /*
+     * A finished bar has to look finished: the head sits at the end of the
+     * track, and its outer border is the first thing a clip eats.
+     */
+    const scanMax = await page.$eval("#scrub-scan", (el) =>
+      Number((el as HTMLInputElement).max),
+    );
+    await scrubTo(page, "scan", scanMax);
+    await wait(400);
+    const whole = await headIsWhole(page, "scan");
+    if (!whole.ok) {
+      note(`the head of a finished bar is cut off (row reads ${whole.row})`);
+    }
+    await scrubTo(page, "scan", 0);
 
     // "The tree grows" is a claim about layout, not about classes: the parse pane
     // must get taller as it plays, which only holds if unbuilt structure takes no
@@ -397,6 +504,73 @@ async function main(): Promise<void> {
     );
     if (overflow > 1) note(`${overflow}px of horizontal overflow`);
 
+    /*
+     * The dock is fixed, so it is the one thing on the page that can cover
+     * something. It must stay on screen wherever you scroll, it must mark the
+     * section you are in, and the page must have reserved its height rather than
+     * leaving the last caveat underneath it.
+     */
+    const dockAt = () =>
+      page.$eval("#dock", (node) => {
+        const box = node.getBoundingClientRect();
+        return { top: box.top, bottom: box.bottom, height: box.height };
+      });
+    // It floats, so it does not touch the bottom — but it is fixed, so it must
+    // stay within a gap of it however far the page scrolls.
+    const FLOAT_GAP_MAX = 40;
+    const offBottom = (box: { bottom: number }) => viewport.height - box.bottom;
+    const dockTop = await dockAt();
+    if (offBottom(dockTop) < 1 || offBottom(dockTop) > FLOAT_GAP_MAX) {
+      note(`the dock is not floating above the bottom (${offBottom(dockTop)}px off)`);
+    }
+
+    await page.evaluate(() =>
+      window.scrollTo({ top: document.body.scrollHeight, behavior: "instant" }),
+    );
+    await wait(300);
+    const dockEnd = await dockAt();
+    if (offBottom(dockEnd) < 1 || offBottom(dockEnd) > FLOAT_GAP_MAX) {
+      note(`the dock scrolled away with the page (${offBottom(dockEnd)}px off the bottom)`);
+    }
+    const covered = await page.evaluate(() => {
+      const last = document.querySelector("#limits li:last-child");
+      const dock = document.getElementById("dock");
+      if (!last || !dock) return -1;
+      // Against the top of the bar itself, not a height: the bar floats, so the
+      // space it needs is its own top edge.
+      return Math.round(
+        last.getBoundingClientRect().bottom - dock.getBoundingClientRect().top,
+      );
+    });
+    if (covered > 0) note(`the dock covers the last caveat by ${covered}px`);
+
+    // Jumping is what it is for, and the chip has to follow — including at the
+    // seam, where the section above is still in the band.
+    // Click the anchor itself rather than a point on screen: the dock is fixed
+    // and its chips scroll sideways, so a coordinate click can miss.
+    for (const stage of ["scan", "codegen"]) {
+      await page.$eval(`[data-jump="stage-${stage}"]`, (el) => (el as HTMLElement).click());
+      await wait(400);
+      const marked = await page.$$eval(".jump.is-here", (nodes) =>
+        nodes.map((node) => (node as HTMLElement).dataset.jump ?? ""),
+      );
+      if (marked.length !== 1 || marked[0] !== `stage-${stage}`) {
+        note(`jumped to stage-${stage} but the dock says ${marked.join(", ") || "nothing"}`);
+      }
+    }
+    await page.$eval('[data-jump="stage-ir"]', (el) => (el as HTMLElement).click());
+    await wait(400);
+    const here = await page.$$eval(".jump.is-here", (nodes) =>
+      nodes.map((node) => (node as HTMLElement).dataset.jump ?? ""),
+    );
+    if (here.length !== 1) {
+      note(`${here.length} dock chips claim to be where you are, expected 1`);
+    } else if (here[0] !== "stage-ir") {
+      note(`jumped to stage-ir but the dock says ${here[0]}`);
+    }
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+    await wait(200);
+
     // A program that does not compile has to explain itself, not go blank.
     await page.$$eval("#presets .preset", (buttons) => {
       const broken = buttons.find((b) => b.textContent?.includes("A mistake"));
@@ -431,7 +605,7 @@ async function main(): Promise<void> {
     ]);
     const stillMoving = await page.evaluate(() => {
       const samples = [
-        ...document.querySelectorAll("[data-reveal], [data-grow], .preset, .player-play, a"),
+        ...document.querySelectorAll("[data-reveal], [data-grow], .preset, .player-play, .bar-fill, .bar-head, a"),
       ].slice(0, 60);
       return samples
         .map((node) => {
@@ -450,6 +624,11 @@ async function main(): Promise<void> {
       { name: "prefers-reduced-motion", value: "no-preference" },
     ]);
 
+    // Colour transitions and the highlight's own fade are mid-flight right after
+    // the drive above, and axe measures whatever is painted at that instant — a
+    // half-way colour reads as a contrast failure that does not exist once it
+    // lands. Let the page settle before judging it.
+    await wait(400);
     const violations = await axeScan(page);
     for (const violation of violations) {
       note(
@@ -460,6 +639,107 @@ async function main(): Promise<void> {
     const shot = join(OUT, `${viewport.name}.png`);
     await page.screenshot({ path: shot as `${string}.png`, fullPage: true });
 
+    /*
+     * Light mode is a second palette, so it is a second set of contrast ratios —
+     * and a dark-mode axe pass says nothing about them. Press the real toggle
+     * rather than setting the attribute, since that also proves the button is
+     * wired, and scan again.
+     */
+    const themed = await page.evaluate(() => {
+      const button = document.getElementById("theme") as HTMLButtonElement | null;
+      const before = document.documentElement.dataset.theme;
+      button?.click();
+      const after = document.documentElement.dataset.theme;
+      return { before, after, label: button?.textContent?.trim() ?? "" };
+    });
+    await wait(400);
+    if (themed.after === themed.before || themed.after !== "light") {
+      note(
+        `the theme toggle did not switch to light (${themed.before} -> ${themed.after})`,
+      );
+    }
+    if (!/DARK MODE/.test(themed.label)) {
+      note(`the theme toggle does not offer the way back (says "${themed.label}")`);
+    }
+    const lightViolations = await axeScan(page);
+    for (const violation of lightViolations) {
+      note(
+        `axe [light] ${violation.impact}: ${violation.id} on ${violation.nodes} node(s) at ${violation.where} — ${violation.help}`,
+      );
+    }
+    const lightShot = join(OUT, `${viewport.name}-light.png`);
+    await page.screenshot({ path: lightShot as `${string}.png`, fullPage: true });
+
+    /*
+     * Every palette is a second set of contrast ratios, and the palette test
+     * checks the tokens in the abstract — what it cannot see is a token used
+     * against the wrong background somewhere in the stylesheet. So: wear each
+     * one, in both modes, and let axe read the real page.
+     */
+    const palettes = await page.$$eval("#palette option", (options) =>
+      options.map((option) => (option as HTMLOptionElement).value),
+    );
+    if (palettes.length < 2) note(`only ${palettes.length} palette(s) offered`);
+    const paletteFaults: string[] = [];
+    for (const id of palettes) {
+      for (const mode of ["dark", "light"]) {
+        const worn = await page.evaluate(
+          (next: string, wanted: string) => {
+            const select = document.getElementById("palette") as HTMLSelectElement;
+            select.value = next;
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+            const toggle = document.getElementById("theme") as HTMLButtonElement;
+            if (document.documentElement.dataset.theme !== wanted) toggle.click();
+            return {
+              palette: document.documentElement.dataset.palette,
+              theme: document.documentElement.dataset.theme,
+              bg: getComputedStyle(document.body).backgroundColor,
+            };
+          },
+          id,
+          mode,
+        );
+        if (worn.palette !== id || worn.theme !== mode) {
+          note(`asked for ${id}/${mode}, got ${worn.palette}/${worn.theme}`);
+        }
+        await wait(400);
+        for (const violation of await axeScan(page)) {
+          paletteFaults.push(
+            `axe [${id}/${mode}] ${violation.impact}: ${violation.id} on ${violation.nodes} node(s) at ${violation.where}`,
+          );
+        }
+      }
+    }
+    for (const fault of paletteFaults) note(fault);
+
+    /*
+     * The speed control is one bar for all six players, so what it must change
+     * is the interval, not the cursor. Compare how far one stage gets in a fixed
+     * wall-clock window at the slow end against the fast end.
+     */
+    const played = async (speed: number, windowMs: number) => {
+      await scrubTo(page, "scan", 0);
+      await page.$eval(
+        "#speed",
+        (el, value) => {
+          const range = el as HTMLInputElement;
+          range.value = String(value);
+          range.dispatchEvent(new Event("input", { bubbles: true }));
+        },
+        speed,
+      );
+      await page.click("#play-scan");
+      await wait(windowMs);
+      await page.click("#play-scan");
+      return page.$eval("#scrub-scan", (el) => Number((el as HTMLInputElement).value));
+    };
+    const slow = await played(0, 1400);
+    const fast = await played(5, 1400);
+    if (!(fast > slow)) {
+      note(`the speed control changed nothing: ${slow} steps slow, ${fast} fast`);
+    }
+    await scrubTo(page, "scan", 0);
+
     report.push(
       `${viewport.name} ${viewport.width}x${viewport.height}: ${sections.length} sections, ` +
         `revealed ${STAGES.map((s) => `${s}=${counts[s].start}->${counts[s].end}`).join(" ")}, ` +
@@ -468,10 +748,14 @@ async function main(): Promise<void> {
         `reduced motion honoured, sections hold their height, ` +
         `independent, keyboard ok, cursors survive resize, ` +
         `${overflow <= 1 ? "no" : `${overflow}px`} overflow, ` +
-        `${violations.length === 0 ? "no serious axe violations" : `${violations.length} axe violation(s)`}, ` +
-        `diagnostic "${diagnostics[0] ?? "none"}" -> ${shot}`,
+        `dock fixed and marking ${here[0] ?? "nothing"}, ` +
+        `finished bar head whole, ` +
+        `${violations.length + lightViolations.length + paletteFaults.length === 0 ? `no serious axe violations across ${palettes.length} palettes, dark and light` : `${violations.length + lightViolations.length + paletteFaults.length} axe violation(s)`}, ` +
+        `speed ${slow}->${fast} steps in 1.4s, ` +
+        `diagnostic "${diagnostics[0] ?? "none"}" -> ${shot}, ${lightShot}`,
     );
     await page.close();
+    await context.close();
   }
 
   await browser.close();
