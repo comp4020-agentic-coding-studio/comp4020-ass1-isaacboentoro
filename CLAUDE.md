@@ -29,9 +29,9 @@ these, and each one is here because breaking it cost me something.
   only its output cannot be scrubbed through and cannot explain itself. Steps are
   emitted as the work happens, never reconstructed afterwards.
 - **Each stage is its own player, and its steps are numbered locally.** A stage's
-  step 3 is the third thing THAT stage did. Six cursors, six sliders, six play
-  buttons; a stage never reads another stage's cursor. Scrubbing one stage must
-  leave the other five untouched — there is a test for exactly that.
+  step 3 is the third thing THAT stage did. Seven cursors, seven sliders, seven
+  play buttons; a stage never reads another stage's cursor. Scrubbing one stage
+  must leave the other six untouched — there is a test for exactly that.
 - **A stage view is a pure function of that stage's cursor.** Panes are built once
   per compile and then only have classes toggled; if rendering ever needs to know
   what the previous cursor was, the design has gone wrong.
@@ -90,7 +90,7 @@ these, and each one is here because breaking it cost me something.
   the document head at build time, so the first paint is already the right
   colours and there is one source of truth rather than blocks scattered through
   the stylesheet. A palette is one attribute on `<html>`: switching it restyles
-  all six stages without touching a pane or moving a cursor.
+  all seven stages without touching a pane or moving a cursor.
 - **Borrowed palettes get checked, not trusted.** Upstream colours are tuned for
   an editor, not for body text on a page: Dracula's comment is 3.0:1 on its own
   background, Tokyo Night's 2.8:1. Each is nudged along its own hue until it
@@ -170,7 +170,7 @@ these, and each one is here because breaking it cost me something.
   exist a frame later. `pnpm shoot` waits before each scan. A flaky sensor gets
   ignored, and an ignored sensor is worse than none.
 - **Preferences are the page's, not a stage's.** Play speed is one bar for all
-  six players and the theme is the whole document, so neither lives in
+  seven players and the theme is the whole document, so neither lives in
   `StagePlayer`. Both are remembered through `prefs.ts`, and remembering is
   best-effort: `localStorage` throws in a sandboxed frame, and a preference is
   never worth a page that will not start. Changing speed mid-play restarts the
@@ -217,11 +217,51 @@ these, and each one is here because breaking it cost me something.
 - **`a[i]` lowers to the multiply and the add, never to one opaque step.** The
   element size is the lesson; hiding it in an addressing mode would waste the only
   stage where it is visible.
-- **Running is not a seventh rewrite, and the page must not imply it is.** The
+- **Running is not one more rewrite, and the page must not imply it is.** The
   run section executes the IR from stage five — the listing already on screen —
   not the assembly, which would need a processor. It is numbered "AFTERWARDS"
-  rather than "STAGE 7", `STAGES` still holds six, and `PLAYERS` is what the UI
-  iterates. `spec/page.test.ts` checks exactly six sections claim to be stages.
+  rather than "STAGE 8", `STAGES` holds seven (register allocation is in that
+  list for the same reason semantics is: it gets a numbered section and a
+  player, even though it annotates rather than rewrites), and `PLAYERS` is what
+  the UI iterates. `spec/page.test.ts` checks exactly seven sections claim to be
+  stages.
+- **A type knows its size and only `ctypes.ts` decides it; a value knows its
+  register and only `regalloc.ts` decides that.** Register allocation runs after
+  lowering and before codegen, and it never rewrites the IR listing — it answers
+  one question, which of the temporaries lowering invented can share a register,
+  by colouring an interference graph built from liveness over the control-flow
+  graph (a straight-line pass over the listing would get a loop wrong, since a
+  value can be live across a backward jump). Two register-only constraints ride
+  along as graph edges rather than living as special cases in codegen: anything
+  live across a `call` cannot be in a caller-saved register, and anything live
+  across `idiv` cannot be in `rax` or `rdx`. Twelve colours, not fourteen —
+  `r10`/`r11` are held back as scratch so codegen can always get a spilled value
+  into a register without asking the allocator for help, and named locals are
+  never coloured at all, because `&x` needs an address and only memory has one.
+  `spec/regalloc.test.ts` asserts the interference property directly (no two
+  live-together temporaries ever share a colour) rather than trusting that a
+  program happening to run correctly proves it; `spec/machine.test.ts`'s
+  gcc/interpreter differential is what actually catches a wrong colouring
+  turning into a wrong answer, since a bad register choice is still
+  syntactically valid assembly.
+- **Coalescing candidates come from the machine, not from a search for
+  redundant copies.** This IR never emits a temp-to-temp `move` — the only
+  place two temporaries are related is `dest`/operand of a `+`, `-`, `*` or
+  unary `-`, because x86 computes those into one of its own operands and
+  codegen already prefers the destination's register for exactly that reason.
+  So `coalesceCandidatesOf` reads candidates straight off those instructions
+  rather than pattern-matching for copies that do not exist here. Merging is
+  never greedy: Briggs' conservative rule only allows it when the merged node
+  would have fewer than twelve neighbours that are themselves near the colour
+  limit, because that is the only guarantee that a merge cannot be the one
+  thing that makes an otherwise-colourable graph stop being one. A refused
+  merge keeps its `mov`; codegen never finds out a merge was even considered,
+  since coalescing changes `colours`, not the IR or codegen. `spec/regalloc.test.ts`
+  checks both directions on a program built to need each: an operand that dies
+  at the merge point gets coalesced, one that survives past it does not, and the
+  `mov` codegen would have needed for the accepted one is gone from the
+  assembly — checked in the emitted instructions, not just the allocator's own
+  bookkeeping.
 - **The interpreter and codegen share `frames.ts`.** If they disagreed by a byte,
   `&x` would mean one thing in the run pane and another in the assembly pane, and
   the page would be quietly lying about the connection. There is a test pinning an

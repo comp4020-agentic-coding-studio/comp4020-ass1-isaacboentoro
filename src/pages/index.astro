@@ -10,328 +10,406 @@ import { PALETTES, paletteCss } from "../ui/palettes";
  * name where there is room. Both are in the markup; CSS picks.
  */
 const JUMPS: { id: string; short: string; long: string }[] = [
-  { id: "source-section", short: "IN", long: "Source" },
-  ...PLAYERS.map((stage, index) => ({
-    id: `stage-${stage}`,
-    short: stage === "run" ? "RUN" : String(index + 1),
-    long: STAGE_TITLES[stage],
-  })),
-  { id: "limits", short: "?", long: "Limits" },
+    { id: "source-section", short: "IN", long: "Source" },
+    ...PLAYERS.map((stage, index) => ({
+        id: `stage-${stage}`,
+        short: stage === "run" ? "RUN" : String(index + 1),
+        long: STAGE_TITLES[stage],
+    })),
+    { id: "limits", short: "?", long: "Limits" },
 ];
 
 const BLURBS: Record<StageId, string> = {
-  preprocess:
-    "Text in, different text out. The compiler proper never sees what you wrote.",
-  scan: "Characters become tokens. Spelling stops mattering; categories start.",
-  parse: "The flat list becomes a tree. Precedence is a shape, not an order.",
-  semantics:
-    "Names get homes and types get checked. None of this is in your source.",
-  ir: "The tree becomes a list. Control flow becomes jumps.",
-  codegen: "Instructions a processor could run — and a lot of moving data around.",
-  run: "Not a rewrite. This executes the IR from stage five, one instruction at a time.",
+    preprocess:
+        "Text in, different text out. The compiler proper never sees what you wrote.",
+    scan: "Characters become tokens. Spelling stops mattering; categories start.",
+    parse: "The flat list becomes a tree. Precedence is a shape, not an order.",
+    semantics:
+        "Names get homes and types get checked. None of this is in your source.",
+    ir: "The tree becomes a list. Control flow becomes jumps.",
+    regalloc:
+        "More values than registers. Which of them can share one is a graph-colouring problem.",
+    codegen:
+        "Instructions a processor could run — and a lot of moving data around.",
+    run: "Not a rewrite. This executes the IR from stage five, one instruction at a time.",
 };
 ---
 
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Compiling C, explained</title>
-    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-    <meta
-      name="description"
-      content="An interactive explainer. Type C — pointers and arrays included — play each stage of the compiler rewriting it, then run the result."
-    />
-    {/* Every palette, as CSS custom properties, from the one place they are
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Compiling C, explained</title>
+        <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+        <meta
+            name="description"
+            content="An interactive explainer. Type C — pointers and arrays included — play each stage of the compiler rewriting it, then run the result."
+        />
+        {
+            /* Every palette, as CSS custom properties, from the one place they are
         defined. Inline rather than a stylesheet so that the colours are in the
-        first byte of the document, not one request later. */}
-    <style is:inline set:html={paletteCss()}></style>
+        first byte of the document, not one request later. */
+        }
+        <style is:inline set:html={paletteCss()}></style>
 
-    {/* Before first paint, so the page never flashes the wrong colours. The
+        {
+            /* Before first paint, so the page never flashes the wrong colours. The
         rules are the ones in `src/ui/prefs.ts` and `src/ui/palettes.ts`: a
         stored choice wins, otherwise the system preference does, otherwise the
         page's own palette. `spec/page.test.ts` checks the keys still match,
-        since this copy cannot import either module. */}
-    <script is:inline define:vars={{ ids: PALETTES.map((palette) => palette.id) }}>
-      try {
-        const stored = localStorage.getItem("compiling-c:theme");
-        const light =
-          stored === "light" ||
-          (stored !== "dark" &&
-            window.matchMedia("(prefers-color-scheme: light)").matches);
-        document.documentElement.dataset.theme = light ? "light" : "dark";
-        const palette = localStorage.getItem("compiling-c:palette");
-        document.documentElement.dataset.palette = ids.includes(palette)
-          ? palette
-          : "brutalist";
-      } catch {
-        document.documentElement.dataset.theme = "dark";
-        document.documentElement.dataset.palette = "brutalist";
-      }
-    </script>
-  </head>
-  <body>
-    {/* No display headline: the page opens on the tool. The h1 stays as a
+        since this copy cannot import either module. */
+        }
+        <script
+            is:inline
+            define:vars={{ ids: PALETTES.map((palette) => palette.id) }}
+        >
+            try {
+                const stored = localStorage.getItem("compiling-c:theme");
+                const light =
+                    stored === "light" ||
+                    (stored !== "dark" &&
+                        window.matchMedia("(prefers-color-scheme: light)")
+                            .matches);
+                document.documentElement.dataset.theme = light
+                    ? "light"
+                    : "dark";
+                const palette = localStorage.getItem("compiling-c:palette");
+                document.documentElement.dataset.palette = ids.includes(palette)
+                    ? palette
+                    : "brutalist";
+            } catch {
+                document.documentElement.dataset.theme = "dark";
+                document.documentElement.dataset.palette = "brutalist";
+            }
+        </script>
+    </head>
+    <body>
+        {
+            /* No display headline: the page opens on the tool. The h1 stays as a
         one-line label because a page with no top-level heading is a real
-        accessibility problem, and `spec/invariants.test.ts` enforces it. */}
-    <header class="topbar">
-      <h1 class="topbar-title">Compiling C, explained</h1>
-    </header>
+        accessibility problem, and `spec/invariants.test.ts` enforces it. */
+        }
+        <header class="topbar">
+            <h1 class="topbar-title">Compiling C, explained</h1>
+        </header>
 
-    <main>
-      <p class="lede">
-        Compiling is not one translation. It is six, and each one throws away
-        something the last one needed. Type C below, play any stage to watch it do
-        its work one step at a time, then run what comes out.
-      </p>
+        <main>
+            <p class="lede">
+                Compiling is not one translation. Each compiler has several
+                stages, and each one throws away something the last one needed.
+                Type C below, play any stage to watch it do its work one step at
+                a time, then run what comes out.
+            </p>
 
-      <section id="source-section" aria-labelledby="source-heading">
-        <div class="section-head">
-          <p class="section-index" aria-hidden="true">INPUT</p>
-          <h2 class="section-name" id="source-heading">Source</h2>
-          <p class="section-blurb">
-            A subset of C: <code>int</code> and <code>char</code>, locals,
-            arithmetic, <code>if</code>, <code>while</code>, <code>for</code>,
-            functions that can call each other, and pointers and arrays —
-            <code>&amp;x</code>, <code>*p</code>, <code>a[i]</code>. Edit it and
-            all six stages recompile.
-          </p>
-        </div>
+            <section id="source-section" aria-labelledby="source-heading">
+                <div class="section-head">
+                    <p class="section-index" aria-hidden="true">INPUT</p>
+                    <h2 class="section-name" id="source-heading">Source</h2>
+                    <p class="section-blurb">
+                        A subset of C: <code>int</code> and <code>char</code>,
+                        locals, arithmetic, <code>if</code>, <code>while</code>, <code
+                            >for</code
+                        >, functions that can call each other, and pointers and
+                        arrays —
+                        <code>&amp;x</code>, <code>*p</code>, <code>a[i]</code>.
+                        Edit it and all seven stages recompile.
+                    </p>
+                </div>
 
-        <div class="editor">
-          <label class="field-label" for="source">C source</label>
-          <div class="editor-frame">
-            <pre class="editor-mirror" id="mirror" aria-hidden="true"></pre>
-            <textarea
-              id="source"
-              class="editor-input"
-              spellcheck="false"
-              autocapitalize="off"
-              autocorrect="off"
-              rows="12"></textarea>
-          </div>
-        </div>
+                <div class="editor">
+                    <label class="field-label" for="source">C source</label>
+                    <div class="editor-frame">
+                        <pre
+                            class="editor-mirror"
+                            id="mirror"
+                            aria-hidden="true">
+                        </pre>
+                        <textarea
+                            id="source"
+                            class="editor-input"
+                            spellcheck="false"
+                            autocapitalize="off"
+                            autocorrect="off"
+                            rows="12"></textarea>
+                    </div>
+                </div>
 
-        <div class="presets-block">
-          <p class="field-label" id="presets-label">Examples</p>
-          <div
-            class="presets"
-            id="presets"
-            role="group"
-            aria-labelledby="presets-label"
-          >
-          </div>
-        </div>
-      </section>
+                <div class="presets-block">
+                    <p class="field-label" id="presets-label">Examples</p>
+                    <div
+                        class="presets"
+                        id="presets"
+                        role="group"
+                        aria-labelledby="presets-label"
+                    >
+                    </div>
+                </div>
+            </section>
 
-      {
-        PLAYERS.map((stage, index) => (
-          <section class="stage" id={`stage-${stage}`} aria-labelledby={`h-${stage}`}>
-            <div class="section-head">
-              <p class="section-index" aria-hidden="true">
-                {stage === "run" ? "AFTERWARDS" : `STAGE ${index + 1} / ${STAGES.length}`}
-              </p>
-              <h2 class="section-name" id={`h-${stage}`}>
-                {STAGE_TITLES[stage]}
-              </h2>
-              <p class="section-blurb">{BLURBS[stage]}</p>
-              <p class="section-io">
-                <span class="io-label">in</span>
-                <span class="io-value">{STAGE_IO[stage].consumes.join(" + ")}</span>
-                <span class="io-label">out</span>
-                <span class="io-value">{STAGE_IO[stage].produces}</span>
-              </p>
-            </div>
+            {
+                PLAYERS.map((stage, index) => (
+                    <section
+                        class="stage"
+                        id={`stage-${stage}`}
+                        aria-labelledby={`h-${stage}`}
+                    >
+                        <div class="section-head">
+                            <p class="section-index" aria-hidden="true">
+                                {stage === "run"
+                                    ? "AFTERWARDS"
+                                    : `STAGE ${index + 1} / ${STAGES.length}`}
+                            </p>
+                            <h2 class="section-name" id={`h-${stage}`}>
+                                {STAGE_TITLES[stage]}
+                            </h2>
+                            <p class="section-blurb">{BLURBS[stage]}</p>
+                            <p class="section-io">
+                                <span class="io-label">in</span>
+                                <span class="io-value">
+                                    {STAGE_IO[stage].consumes.join(" + ")}
+                                </span>
+                                <span class="io-label">out</span>
+                                <span class="io-value">
+                                    {STAGE_IO[stage].produces}
+                                </span>
+                            </p>
+                        </div>
 
-            <div class="player">
-              <div class="player-row">
-                <button
-                  class="player-play"
-                  id={`play-${stage}`}
-                  type="button"
-                  aria-pressed="false"
-                >
-                  PLAY
-                </button>
-                {/* A real range input, with its own track drawn behind it: the
+                        <div class="player">
+                            <div class="player-row">
+                                <button
+                                    class="player-play"
+                                    id={`play-${stage}`}
+                                    type="button"
+                                    aria-pressed="false"
+                                >
+                                    PLAY
+                                </button>
+                                {/* A real range input, with its own track drawn behind it: the
                     native one cannot be made to glide, and the input keeps the
                     keyboard and the accessibility tree it was born with. */}
-                <div class="bar" id={`bar-${stage}`}>
-                  <input
-                    class="bar-input player-scrubber"
-                    id={`scrub-${stage}`}
-                    type="range"
-                    min="0"
-                    max="0"
-                    value="0"
-                    step="1"
-                    aria-label={`${STAGE_TITLES[stage]} step`}
-                  />
-                  <span class="bar-track" aria-hidden="true">
-                    <span class="bar-fill" />
-                    <span class="bar-head" />
-                  </span>
-                </div>
-                <p class="player-position" id={`pos-${stage}`}>STEP 1 / 1</p>
-              </div>
-              <div class="player-commentary" aria-live="polite">
-                <p class="player-step" id={`title-${stage}`} />
-                <p class="player-explain" id={`explain-${stage}`} />
-              </div>
-            </div>
+                                <div class="bar" id={`bar-${stage}`}>
+                                    <input
+                                        class="bar-input player-scrubber"
+                                        id={`scrub-${stage}`}
+                                        type="range"
+                                        min="0"
+                                        max="0"
+                                        value="0"
+                                        step="1"
+                                        aria-label={`${STAGE_TITLES[stage]} step`}
+                                    />
+                                    <span class="bar-track" aria-hidden="true">
+                                        <span class="bar-fill" />
+                                        <span class="bar-head" />
+                                    </span>
+                                </div>
+                                <p class="player-position" id={`pos-${stage}`}>
+                                    STEP 1 / 1
+                                </p>
+                            </div>
+                            <div class="player-commentary" aria-live="polite">
+                                <p class="player-step" id={`title-${stage}`} />
+                                <p
+                                    class="player-explain"
+                                    id={`explain-${stage}`}
+                                />
+                            </div>
+                        </div>
 
-            <div class="stage-grid">
-              <div class="stage-column">
-                {/* Not "what it is reading" — only the preprocessor reads your
+                        <div class="stage-grid">
+                            <div class="stage-column">
+                                {/* Not "what it is reading" — only the preprocessor reads your
                     source. This is where the current step points back to, which
                     is a different and more useful claim. The editor is the
                     accessible copy, so these echoes stay out of the tree. */}
-                <p class="field-label">Where this step points in your source</p>
-                <pre class="echo" id={`echo-${stage}`} aria-hidden="true" />
-                {/* Filled for the two stages that have a grammar; the rule the
+                                <p class="field-label">
+                                    Where this step points in your source
+                                </p>
+                                <pre
+                                    class="echo"
+                                    id={`echo-${stage}`}
+                                    aria-hidden="true"
+                                />
+                                {/* Filled for the two stages that have a grammar; the rule the
                     current step applied is marked as it plays. */}
-                <div class="rules" id={`rules-${stage}`} />
-              </div>
-              <div class="stage-column">
-                <p class="field-label">What it produces</p>
-                <div
-                  class="stage-body"
-                  id={`pane-${stage}`}
-                  tabindex="0"
-                  aria-labelledby={`h-${stage}`}
-                />
-              </div>
-            </div>
-          </section>
-        ))
-      }
+                                <div class="rules" id={`rules-${stage}`} />
+                            </div>
+                            <div class="stage-column">
+                                <p class="field-label">What it produces</p>
+                                <div
+                                    class="stage-body"
+                                    id={`pane-${stage}`}
+                                    tabindex="0"
+                                    aria-labelledby={`h-${stage}`}
+                                />
+                            </div>
+                        </div>
+                    </section>
+                ))
+            }
 
-      <section id="limits" aria-labelledby="limits-heading">
-        <div class="section-head">
-          <p class="section-index" aria-hidden="true">CAVEATS</p>
-          <h2 class="section-name" id="limits-heading">What is left out</h2>
-          <p class="section-blurb">
-            A real compiler, but a small one. Being clear about the edges matters
-            more than pretending otherwise.
-          </p>
-        </div>
-        <ul class="limits">
-          <li>
-            No structs, floats, strings or bitwise operators. Declarations stay
-            simple — <code>int x;</code>, <code>int *p;</code>,
-            <code>int a[10];</code> — so no function pointers, no
-            <code>int (*p)[10]</code>, and one array dimension only.
-          </li>
-          <li>
-            No bounds checking, because C has none. <code>a[5]</code> on a
-            three-element array compiles quietly, and every stage below will show
-            you it doing so.
-          </li>
-          <li>
-            No pointer subtraction and no <code>&amp;array</code>. Both are real C;
-            both need type rules this explainer stops short of.
-          </li>
-          <li>
-            No standard library and no <code>#include</code>. Every function has
-            to be defined here.
-          </li>
-          <li>
-            No register allocation. Every temporary gets a stack slot, which is
-            why the assembly is mostly loads and stores — and why optimising
-            compilers exist.
-          </li>
-          <li>
-            No assembler and no linker. The x86-64 is text, and nothing on this
-            page executes it — there is no processor here to. It does assemble,
-            though: <code>gcc</code> accepts it, and a test builds and runs it on
-            every check.
-          </li>
-          <li>
-            What runs below is the <em>IR</em>, interpreted — stage five, not stage
-            six. Same program, one level up, on the same frame layout. Memory is a
-            flat array, so a pointer is an index into it and the addresses are not
-            the ones a real process would see.
-          </li>
-        </ul>
-      </section>
-    </main>
+            <section id="limits" aria-labelledby="limits-heading">
+                <div class="section-head">
+                    <p class="section-index" aria-hidden="true">CAVEATS</p>
+                    <h2 class="section-name" id="limits-heading">
+                        What is left out
+                    </h2>
+                    <p class="section-blurb">
+                        A real compiler, but a small one. Being clear about the
+                        edges matters more than pretending otherwise.
+                    </p>
+                </div>
+                <ul class="limits">
+                    <li>
+                        No structs, floats, strings or bitwise operators.
+                        Declarations stay simple — <code>int x;</code>, <code
+                            >int *p;</code
+                        >,
+                        <code>int a[10];</code> — so no function pointers, no
+                        <code>int (*p)[10]</code>, and one array dimension only.
+                    </li>
+                    <li>
+                        No bounds checking, because C has none. <code>a[5]</code
+                        > on a three-element array compiles quietly, and every stage
+                        below will show you it doing so.
+                    </li>
+                    <li>
+                        No pointer subtraction and no <code>&amp;array</code>.
+                        Both are real C; both need type rules this explainer
+                        stops short of.
+                    </li>
+                    <li>
+                        No standard library and no <code>#include</code>. Every
+                        function has to be defined here.
+                    </li>
+                    <li>
+                        Register allocation, but a plain one. Twelve colours, and
+                        it does coalescing — merging a destination with an
+                        operand when x86's own two-address arithmetic would
+                        rather compute there directly than copy afterwards — but
+                        no rematerialisation,
+                        so a spilled constant is reloaded rather than recomputed.
+                        Named locals are never in registers at all, because <code
+                            >&amp;x</code
+                        > has to have an answer and only memory has an address.
+                    </li>
+                    <li>
+                        No instruction scheduling and no peephole pass. What
+                        comes out is in the order lowering produced it, which is
+                        why the assembly still reads one IR instruction at a
+                        time.
+                    </li>
+                    <li>
+                        No assembler and no linker. The x86-64 is text, and
+                        nothing on this page executes it — there is no processor
+                        here to. It does assemble, though: <code>gcc</code> accepts
+                        it, and a test builds and runs it on every check.
+                    </li>
+                    <li>
+                        What runs below is the <em>IR</em>, interpreted — stage
+                        five, not stage seven. Same program, one level up, on
+                        the same frame layout. Memory is a flat array, so a
+                        pointer is an index into it and the addresses are not
+                        the ones a real process would see.
+                    </li>
+                </ul>
+            </section>
+        </main>
 
-    {/*
+        {
+            /*
       The dock: where you are, where else you can go, and the two settings that
       belong to the page rather than to any one stage. It is fixed to the bottom
       because the stages are long — the controls would otherwise be a scroll
       away from whatever you were watching. Anchors, so it works with no
       JavaScript; only the "you are here" marker needs any.
-    */}
-    <div class="dock" id="dock">
-      <nav class="dock-jumps" aria-label="Sections">
-        {
-          JUMPS.map((jump) => (
-            <a class="jump" href={`#${jump.id}`} data-jump={jump.id}>
-              {/* Both labels are always in the accessibility tree — the narrow
+    */
+        }
+        <div class="dock" id="dock">
+            <nav class="dock-jumps" aria-label="Sections">
+                {
+                    JUMPS.map((jump) => (
+                        <a
+                            class="jump"
+                            href={`#${jump.id}`}
+                            data-jump={jump.id}
+                        >
+                            {/* Both labels are always in the accessibility tree — the narrow
                   one is only clipped, never removed — so a chip reading "3" is
                   still announced as "3 Parse". Hiding the words outright left
                   nine links with no name at all, and axe said so. */}
-              <span class="jump-short">{jump.short}</span>
-              <span class="jump-long">{jump.long}</span>
-            </a>
-          ))
-        }
-      </nav>
+                            <span class="jump-short">{jump.short}</span>
+                            <span class="jump-long">{jump.long}</span>
+                        </a>
+                    ))
+                }
+            </nav>
 
-      {/* Neither of these belongs to a stage: one speed drives all six players,
-          and the theme is the whole page. Both are remembered. */}
-      <div class="settings">
-        <div class="setting">
-          <label class="setting-label" for="speed">Speed</label>
-          <div class="bar bar-plain bar-short" id="bar-speed">
-            <input
-              class="bar-input setting-range"
-              id="speed"
-              type="range"
-              min="0"
-              max="5"
-              step="1"
-              value="2"
-            />
-            <span class="bar-track" aria-hidden="true">
-              <span class="bar-fill" />
-              <span class="bar-head" />
-            </span>
-          </div>
-          <output class="setting-value" id="speed-value" for="speed">×1</output>
-        </div>
-        <div class="setting">
-          <label class="setting-label" for="palette">Palette</label>
-          {/* A real <select>: it is a list of one-of-many, and the platform's
-              own control already knows how to be one on a phone. */}
-          <select class="setting-select" id="palette">
             {
-              PALETTES.map((palette) => (
-                <option value={palette.id}>{palette.name}</option>
-              ))
+                /* Neither of these belongs to a stage: one speed drives all six players,
+          and the theme is the whole page. Both are remembered. */
             }
-          </select>
+            <div class="settings">
+                <div class="setting">
+                    <label class="setting-label" for="speed">Speed</label>
+                    <div class="bar bar-plain bar-short" id="bar-speed">
+                        <input
+                            class="bar-input setting-range"
+                            id="speed"
+                            type="range"
+                            min="0"
+                            max="5"
+                            step="1"
+                            value="2"
+                        />
+                        <span class="bar-track" aria-hidden="true">
+                            <span class="bar-fill"></span>
+                            <span class="bar-head"></span>
+                        </span>
+                    </div>
+                    <output class="setting-value" id="speed-value" for="speed"
+                        >×1</output
+                    >
+                </div>
+                <div class="setting">
+                    <label class="setting-label" for="palette">Palette</label>
+                    {
+                        /* A real <select>: it is a list of one-of-many, and the platform's
+              own control already knows how to be one on a phone. */
+                    }
+                    <select class="setting-select" id="palette">
+                        {
+                            PALETTES.map((palette) => (
+                                <option value={palette.id}>
+                                    {palette.name}
+                                </option>
+                            ))
+                        }
+                    </select>
+                </div>
+                <button class="setting-toggle" id="theme" type="button"
+                    >LIGHT MODE</button
+                >
+            </div>
         </div>
-        <button class="setting-toggle" id="theme" type="button">LIGHT MODE</button>
-      </div>
-    </div>
 
-    <noscript>
-      <p>
-        This page is the interaction: it compiles what you type, in your browser,
-        and plays each stage back step by step. With JavaScript off there is
-        nothing to play. The six stages it walks are preprocessing, scanning,
-        parsing, semantic analysis, lowering to an intermediate representation,
-        and generating assembly.
-      </p>
-    </noscript>
+        <noscript>
+            <p>
+                This page is the interaction: it compiles what you type, in your
+                browser, and plays each stage back step by step. With JavaScript
+                off there is nothing to play. The seven stages it walks are
+                preprocessing, scanning, parsing, semantic analysis, lowering to
+                an intermediate representation, allocating registers by
+                colouring an interference graph, and generating assembly.
+            </p>
+        </noscript>
 
-    <script>
-      import { start } from "../ui/app";
+        <script>
+            import { start } from "../ui/app";
 
-      start();
-    </script>
-  </body>
+            start();
+        </script>
+    </body>
 </html>

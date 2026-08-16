@@ -7,6 +7,12 @@ import { analyse } from "../src/compiler/semantics";
 import { preprocess } from "../src/compiler/preprocess";
 import { INT, typeName } from "../src/compiler/ctypes";
 import { METHOD, PARSE_RULES, RULES_BY_STAGE } from "../src/compiler/grammar";
+import {
+  ALLOCATABLE,
+  SCRATCH_A,
+  SCRATCH_B,
+  regName,
+} from "../src/compiler/registers";
 import { SOURCE, STAGE_IO } from "../src/compiler/stages";
 import type { AstNode, Expr, Span, Stmt } from "../src/compiler/types";
 import { STAGES, childrenOf, labelOf } from "../src/compiler/types";
@@ -613,23 +619,26 @@ describe("generate assembly", () => {
 
   it("turns a comparison into cmp plus setcc", () => {
     const asm = asmOf("int main() { int a; return a < 3; }");
-    expect(asm).toContain("cmp eax, 3");
-    expect(asm).toContain("setl al");
-    expect(asm).toContain("movzx eax, al");
+    // `a` is a named local, so it has to be fetched; the answer is a temporary,
+    // so it lands wherever the allocator put it.
+    expect(asm.some((line) => /^cmp \w+, 3$/.test(line))).toBe(true);
+    expect(asm.some((line) => /^setl \w+$/.test(line))).toBe(true);
+    expect(asm.some((line) => /^movzx \w+, \w+$/.test(line))).toBe(true);
   });
 
-  it("uses idiv for both / and %", () => {
+  it("uses idiv, and puts the divisor somewhere idiv will not destroy", () => {
     const div = asmOf("int main() { int a; return a / 2; }");
     expect(div).toContain("cdq");
-    expect(div).toContain("idiv ecx");
-    // The quotient comes out of eax, into the temporary's slot.
-    expect(div).toContain("mov [rbp-8], eax");
+    // The divisor goes to a scratch register first: `cdq` overwrites edx and
+    // `idiv` reads eax, so a divisor allocated to either would be gone.
+    expect(div).toContain("idiv r10d");
+    expect(div).toContain("mov eax, [rbp-4]");
+    expect(div.indexOf("mov r10d, 2")).toBeLessThan(div.indexOf("cdq"));
 
     const mod = asmOf("int main() { int a; return a % 2; }");
     // The remainder comes out of edx instead, and is the only difference.
-    expect(mod).toContain("idiv ecx");
-    expect(mod).toContain("mov [rbp-8], edx");
-    expect(mod).not.toContain("mov [rbp-8], eax");
+    expect(mod).toContain("idiv r10d");
+    expect(mod).toContain("mov eax, edx");
   });
 
   it("stores a constant without borrowing a register", () => {
@@ -643,13 +652,16 @@ describe("generate assembly", () => {
     expect(asm.at(-1)).toBe("ret");
   });
 
-  it("gives every temporary a distinct slot", () => {
-    const result = compile("int main() { return 1 + 2 * 3 + 4; }");
-    const stores = result.codegen.lines
-      .map((line) => /^mov \[(rbp[-+]\d+)\], eax$/.exec(line.text)?.[1])
-      .filter((slot): slot is string => Boolean(slot));
-    expect(new Set(stores).size).toBe(stores.length);
+  it("keeps a chain of temporaries entirely in registers", () => {
+    // Every temporary here dies as soon as the next one is computed, so they can
+    // all share one register and the whole expression never touches memory. This
+    // used to be twelve instructions with a store after every one of them.
+    const asm = asmOf("int main() { return 1 + 2 * 3 + 4; }");
+    const body = asm.slice(asm.indexOf("main:") + 1);
+    expect(body.filter((line) => /\[rbp/.test(line))).toEqual([]);
+    expect(body).toContain("imul eax, 3");
   });
+
 
   it("attributes every line to the IR instruction that caused it", () => {
     const result = compile("int main() { int x = 1; return x; }");
@@ -854,14 +866,22 @@ describe("pointers and arrays", () => {
   it("moves addresses in 64-bit registers and ints in 32-bit ones", () => {
     const asm = compileOk("int main() { int x = 1; int *p = &x; return *p; }")
       .codegen.lines.map((line) => line.text);
-    expect(asm.some((line) => /^mov rax, \[rbp-\d+\]$/.test(line))).toBe(true);
-    expect(asm).toContain("mov eax, [rax]");
+    // `p` is a named local, so reading it is a load — and it is eight bytes wide,
+    // so the register it lands in has to be a 64-bit one.
+    const fetch = asm.find((line) => /^mov \w+, \[rbp-\d+\]$/.test(line)) ?? "";
+    const register = /^mov (\w+),/.exec(fetch)?.[1] ?? "";
+    const quads = new Set(
+      [...ALLOCATABLE, SCRATCH_A, SCRATCH_B].map((reg) => regName(reg, 8)),
+    );
+    expect(quads.has(register), fetch).toBe(true);
+    // Dereferencing it reads four bytes, because that is what it points at.
+    expect(asm.some((line) => /^mov e\w+, \[\w+\]$/.test(line))).toBe(true);
   });
 
   it("sign-extends a char rather than reading four bytes from a one-byte slot", () => {
     const asm = compileOk("int main() { char c = 'a'; int n = c; return n; }")
       .codegen.lines.map((line) => line.text);
-    expect(asm.some((line) => line.startsWith("movsx eax, byte ptr"))).toBe(true);
+    expect(asm.some((line) => /^movsx \w+, byte ptr /.test(line))).toBe(true);
   });
 
   it("writes a char back one byte at a time", () => {

@@ -47,8 +47,17 @@ export const STAGE_IO: Record<StageId, StageIO> = {
     consumes: ["a syntax tree", "a symbol table and types"],
     produces: "three-address IR",
   },
+  /**
+   * Like the analyser, this one annotates rather than rewrites: the IR listing
+   * is untouched afterwards, and what comes out is a decision about where each
+   * of its temporaries lives.
+   */
+  regalloc: {
+    consumes: ["three-address IR"],
+    produces: "a register assignment",
+  },
   codegen: {
-    consumes: ["three-address IR", "a symbol table and types"],
+    consumes: ["three-address IR", "a register assignment", "a symbol table and types"],
     produces: "x86-64 assembly",
   },
   /**

@@ -1,6 +1,7 @@
 import { generate } from "./codegen";
 import { interpret } from "./interpret";
 import { lower } from "./ir";
+import { EMPTY_ALLOCATION, allocate } from "./regalloc";
 import { scan } from "./lexer";
 import { parse } from "./parser";
 import { preprocess } from "./preprocess";
@@ -78,7 +79,14 @@ export function compile(source: string): Compilation {
   add(ir.steps);
   reached.push("ir");
 
-  const codegen = generate(ir.instrs, semantics);
+  // Not a rewrite either: the listing is unchanged afterwards. What comes out is
+  // a decision about where each of its temporaries lives, which codegen then
+  // spends.
+  const regalloc = allocate(ir.instrs);
+  add(regalloc.steps);
+  reached.push("regalloc");
+
+  const codegen = generate(ir.instrs, semantics, regalloc);
   add(codegen.steps);
   reached.push("codegen");
 
@@ -98,6 +106,7 @@ export function compile(source: string): Compilation {
     parse: parsed,
     semantics,
     ir,
+    regalloc,
     codegen,
     reached,
   };
@@ -139,6 +148,7 @@ function blank(
         steps: EMPTY_STEPS,
       },
     ir: parts.ir ?? { instrs: [], steps: EMPTY_STEPS },
+    regalloc: parts.regalloc ?? EMPTY_ALLOCATION,
     codegen: parts.codegen ?? { lines: [], steps: EMPTY_STEPS },
     reached,
     ...(error ? { error } : {}),

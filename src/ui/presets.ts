@@ -149,6 +149,34 @@ int main() {
 }`,
   },
   {
+    name: "Registers",
+    about: "coalescing a copy away, and running out of registers anyway",
+    source: `int six(int a, int b, int c, int d, int e, int f) {
+  return a + b + c + d + e + f;
+}
+
+int id(int n) {
+  return n;
+}
+
+int main() {
+  int a = 3;
+  int b = 4;
+  // Feeds straight into the next add, so the allocator can give the running
+  // total the same register throughout instead of copying it along: that
+  // reuse is coalescing.
+  int chain = (a + b) + (a + b);
+
+  // Twelve results, each still needed after the calls that come after it:
+  // they compete for the five registers a function has to hand back to its
+  // caller, which is what pushes some into callee-saved registers and,
+  // eventually, one into memory.
+  return six(id(1), id(2), id(3), id(4), id(5), id(6))
+       + six(id(7), id(8), id(9), id(10), id(11), id(12))
+       + chain;
+}`,
+  },
+  {
     name: "A mistake",
     about: "which stage catches which kind of bug",
     source: `int main() {

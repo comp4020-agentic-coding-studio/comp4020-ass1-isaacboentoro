@@ -474,6 +474,42 @@ describe("the page, driven", () => {
     }
   });
 
+  it("draws the interference graph, and colours it as the stage plays", () => {
+    // The opening preset computes one intermediate value, which is not a graph.
+    // The loop one computes several, so it has something to say.
+    const loop = PRESETS.findIndex((preset) => preset.name === "Loop");
+    document.querySelectorAll<HTMLButtonElement>("#presets .preset")[loop].click();
+
+    const scrub = document.getElementById("scrub-regalloc") as HTMLInputElement;
+    const nodes = () =>
+      document.querySelectorAll("#pane-regalloc .graph-node.is-shown").length;
+    const coloured = () =>
+      document.querySelectorAll("#pane-regalloc .alloc-reg.is-shown").length;
+
+    expect(document.querySelectorAll("#pane-regalloc .graph")).toHaveLength(1);
+    scrubTo("regalloc", 0);
+    // The first step introduces one value and has coloured nothing: the graph
+    // has to exist before anything can be said about colouring it.
+    expect(nodes()).toBe(1);
+    expect(coloured()).toBe(0);
+
+    scrubTo("regalloc", Number(scrub.max));
+    expect(nodes()).toBeGreaterThan(1);
+    expect(coloured()).toBe(nodes());
+  });
+
+  it("keeps the graph out of the accessibility tree, and the table in it", () => {
+    // Eleven-pixel text on a circle is not how anyone reads a table. The drawing
+    // is the argument; the table is the content, and axe only ever sees the one
+    // that is actually readable.
+    const graph = document.querySelector("#pane-regalloc .graph");
+    expect(graph?.getAttribute("aria-hidden")).toBe("true");
+    const headings = [
+      ...document.querySelectorAll("#pane-regalloc .allocation th"),
+    ].map((node) => node.textContent);
+    expect(headings).toContain("lives in");
+  });
+
   it("shows the grammar and marks the rule the current step applied", () => {
     const rules = document.querySelectorAll("#rules-parse .rule");
     expect(rules.length).toBeGreaterThan(10);

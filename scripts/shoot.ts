@@ -27,8 +27,17 @@ const DIST = resolve("dist");
 const OUT = resolve(".screens");
 const CHROME = ["/usr/bin/chromium", "/usr/bin/google-chrome", "/usr/bin/chrome"];
 
-/** Must match PLAYERS in src/compiler/types.ts — the six rewrites, then running. */
-const STAGES = ["preprocess", "scan", "parse", "semantics", "ir", "codegen", "run"];
+/** Must match PLAYERS in src/compiler/types.ts — the seven rewrites, then running. */
+const STAGES = [
+  "preprocess",
+  "scan",
+  "parse",
+  "semantics",
+  "ir",
+  "regalloc",
+  "codegen",
+  "run",
+];
 
 /** The whole compiler ships to the visitor, so its weight is a real constraint. */
 const GZIP_BUDGET_BYTES = 60_000;

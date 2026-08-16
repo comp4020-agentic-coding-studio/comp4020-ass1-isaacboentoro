@@ -13,7 +13,7 @@ import { type StageTrace, tracesOf } from "./reveal";
  * Building once per compile and toggling per step is what keeps dragging smooth.
  */
 
-export type Reveal = { el: HTMLElement; step: number };
+export type Reveal = { el: HTMLElement | SVGElement; step: number };
 
 export type BuiltPanes = {
   /** Reveal lists are per stage, because each stage has its own player. */
@@ -22,6 +22,20 @@ export type BuiltPanes = {
   /** The element that holds the current-step marker, per stage. */
   bodies: Record<StageId, HTMLElement>;
 };
+
+/** SVG needs its own namespace, or the browser builds inert HTML elements. */
+function svgEl(
+  tag: string,
+  className?: string,
+  attributes: Record<string, string | number> = {},
+): SVGElement {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  if (className) node.setAttribute("class", className);
+  for (const [name, value] of Object.entries(attributes)) {
+    node.setAttribute(name, String(value));
+  }
+  return node;
+}
 
 /** Never use innerHTML here: the source text is the visitor's own input. */
 function el(
@@ -82,7 +96,7 @@ export function buildPanes(
     const at = traces[stage].producedAt;
 
     /** Stamp an element with the local step that brings it into existence. */
-    const reveal = (node: HTMLElement, id: string): HTMLElement => {
+    const reveal = <T extends HTMLElement | SVGElement>(node: T, id: string): T => {
       const step = at.get(id);
       if (step !== undefined) {
         node.dataset.reveal = String(step);
@@ -143,6 +157,9 @@ export function buildPanes(
       case "ir":
         buildIr(compilation, body, reveal);
         break;
+      case "regalloc":
+        buildRegalloc(compilation, body, reveal);
+        break;
       case "codegen":
         buildCodegen(compilation, body, reveal);
         break;
@@ -167,6 +184,8 @@ function stageName(stage: StageId | string): string {
       return "the analyser";
     case "ir":
       return "lowering";
+    case "regalloc":
+      return "register allocation";
     case "codegen":
       return "code generation";
     default:
@@ -197,7 +216,7 @@ function lineAndColumn(source: string, offset: number) {
 
 // -------------------------------------------------------------------- panes
 
-type Reveals = (node: HTMLElement, id: string) => HTMLElement;
+type Reveals = <T extends HTMLElement | SVGElement>(node: T, id: string) => T;
 
 function buildPreprocess(
   compilation: Compilation,
@@ -359,6 +378,220 @@ function buildIr(
     listing.append(reveal(line, instr.id));
   }
   body.append(listing);
+}
+
+/**
+ * The interference graph, drawn, and the same thing as a table.
+ *
+ * The drawing is the argument — two temporaries joined by a line cannot share a
+ * register — but it is not the accessible copy: an SVG full of eleven-pixel text
+ * is no way to read a table, so the graph is hidden from the accessibility tree
+ * and the table beside it carries every fact the graph does.
+ *
+ * There is deliberately no hue in here. On this page the accent means "here" and
+ * syntax colour means "what kind of token"; a third meaning would make both of
+ * them ambiguous. So a coloured node is labelled with the name of the register it
+ * got, which is what the colour stood for anyway. A coalesced pair gets a dashed
+ * line rather than a colour of its own, for the same reason — the table beside
+ * it says the same thing in words either way.
+ */
+function buildRegalloc(
+  compilation: Compilation,
+  body: HTMLElement,
+  reveal: Reveals,
+): void {
+  const { functions } = compilation.regalloc;
+  const withTemps = functions.filter((one) => one.nodes.length > 0);
+
+  if (withTemps.length === 0) {
+    body.append(
+      el(
+        "p",
+        "pane-note",
+        "Nothing to allocate: this program computes no intermediate values, so there is no graph and no competition for a register.",
+      ),
+    );
+    return;
+  }
+
+  for (const alloc of withTemps) {
+    body.append(el("h3", "pane-subhead", `${alloc.func} — ${alloc.nodes.length} temporaries`));
+    body.append(graphOf(alloc, reveal));
+    body.append(tableOf(alloc, reveal));
+  }
+
+  body.append(
+    el(
+      "p",
+      "pane-note",
+      "Twelve colours, because two of the fourteen general-purpose registers are held back as scratch and neither the stack pointer nor the frame pointer is ever available. A temporary with no colour keeps the stack slot it already had.",
+    ),
+  );
+  body.append(
+    el(
+      "p",
+      "pane-note",
+      "A dashed line is a coalesce, not an interference: x86 arithmetic computes into one of its own operands, so a destination and an operand that never overlap are given the same register on purpose — the copy between them would otherwise be a real instruction with nothing to do.",
+    ),
+  );
+}
+
+const GRAPH_SIZE = 260;
+const GRAPH_RADIUS = 96;
+
+function graphOf(
+  alloc: Compilation["regalloc"]["functions"][number],
+  reveal: Reveals,
+): SVGElement {
+  const nodes = alloc.nodes;
+  const centre = GRAPH_SIZE / 2;
+  const dot = Math.max(9, Math.min(17, 220 / Math.max(5, nodes.length)));
+
+  const at = (index: number) => {
+    if (nodes.length === 1) return { x: centre, y: centre };
+    const angle = -Math.PI / 2 + (index * 2 * Math.PI) / nodes.length;
+    return {
+      x: centre + GRAPH_RADIUS * Math.cos(angle),
+      y: centre + GRAPH_RADIUS * Math.sin(angle),
+    };
+  };
+
+  const where = new Map(nodes.map((node, index) => [node.temp, at(index)]));
+  const svg = svgEl("svg", "graph", {
+    viewBox: `0 0 ${GRAPH_SIZE} ${GRAPH_SIZE}`,
+    "aria-hidden": "true",
+    focusable: "false",
+  });
+
+  // Edges first, so a node's circle sits on top of the lines that reach it.
+  for (const edge of alloc.edges) {
+    const from = where.get(edge.a);
+    const to = where.get(edge.b);
+    if (!from || !to) continue;
+    svg.append(
+      reveal(
+        svgEl("line", "graph-edge", { x1: from.x, y1: from.y, x2: to.x, y2: to.y }),
+        edge.id,
+      ),
+    );
+  }
+
+  // A coalesced pair never has an interference edge — that is the whole
+  // precondition for merging them — so it gets its own dashed line instead,
+  // revealed at the same step the pair is coloured, since that is the step
+  // that makes the merge real rather than merely proposed. A group of more
+  // than two draws as a chain, one link to its next member, rather than every
+  // pair: a five-way merge drawn completely is ten crossing lines saying the
+  // same thing ten times, which is noise, not evidence.
+  const indexOf = new Map(nodes.map((node, index) => [node.temp, index]));
+  for (const node of nodes) {
+    const members = node.coalescedWith ?? [];
+    if (members.length === 0) continue;
+    const myIndex = indexOf.get(node.temp) ?? 0;
+    let next: string | undefined;
+    let nextIndex = Number.POSITIVE_INFINITY;
+    for (const partner of members) {
+      const index = indexOf.get(partner) ?? -1;
+      if (index > myIndex && index < nextIndex) {
+        nextIndex = index;
+        next = partner;
+      }
+    }
+    if (!next) continue;
+    const from = where.get(node.temp);
+    const to = where.get(next);
+    if (!from || !to) continue;
+    svg.append(
+      reveal(
+        svgEl("line", "graph-coalesce", { x1: from.x, y1: from.y, x2: to.x, y2: to.y }),
+        `${node.id}:reg`,
+      ),
+    );
+  }
+
+  for (const node of nodes) {
+    const point = where.get(node.temp);
+    if (!point) continue;
+
+    const group = svgEl("g", "graph-node");
+    group.append(svgEl("circle", "graph-dot", { cx: point.x, cy: point.y, r: dot }));
+    const name = svgEl("text", "graph-name", {
+      x: point.x,
+      y: point.y,
+      "text-anchor": "middle",
+      "dominant-baseline": "central",
+    });
+    name.textContent = node.temp;
+    group.append(name);
+    svg.append(reveal(group, node.id));
+
+    const register = svgEl("text", "graph-reg", {
+      x: point.x,
+      y: point.y + dot + 10,
+      "text-anchor": "middle",
+    });
+    register.textContent = node.reg ?? "stack";
+    svg.append(reveal(register, `${node.id}:reg`));
+  }
+
+  return svg;
+}
+
+function tableOf(
+  alloc: Compilation["regalloc"]["functions"][number],
+  reveal: Reveals,
+): HTMLElement {
+  const table = el("table", "symbols allocation");
+  const head = el("thead");
+  const headRow = el("tr");
+  for (const heading of [
+    "value",
+    "cannot share with",
+    "coalesced with",
+    "set aside",
+    "lives in",
+  ]) {
+    headRow.append(el("th", undefined, heading));
+  }
+  head.append(headRow);
+  table.append(head);
+
+  const tbody = el("tbody");
+  for (const node of alloc.nodes) {
+    const row = el("tr", "symbol");
+    row.append(el("td", "symbol-name", node.temp));
+    row.append(
+      el(
+        "td",
+        undefined,
+        node.neighbours.length > 0 ? node.neighbours.join(" ") : "—",
+      ),
+    );
+    row.append(
+      el(
+        "td",
+        "alloc-coalesced",
+        node.coalescedWith && node.coalescedWith.length > 0
+          ? node.coalescedWith.join(" ")
+          : "—",
+      ),
+    );
+    row.append(
+      reveal(
+        el("td", "alloc-order", node.order === undefined ? "—" : `#${node.order}`),
+        `${node.id}:order`,
+      ),
+    );
+    row.append(
+      reveal(
+        el("td", "alloc-reg", node.reg ?? "the frame"),
+        `${node.id}:reg`,
+      ),
+    );
+    tbody.append(reveal(row, node.id));
+  }
+  table.append(tbody);
+  return table;
 }
 
 function buildRun(

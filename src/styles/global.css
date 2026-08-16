@@ -1132,6 +1132,66 @@ mark .tok {
   padding: 0.3rem 0.4rem;
 }
 
+/*
+ * register allocation
+ *
+ * No hue in here on purpose. The accent already means "here" and syntax colour
+ * already means "what kind of token"; a third meaning would make a reader guess
+ * which one they are looking at. A coloured node wears the name of the register
+ * it got, which is what its colour would have stood for.
+ */
+
+.graph {
+  border: var(--rule) solid var(--dimmer);
+  display: block;
+  margin: 0.5rem 0 1rem;
+  max-width: 24rem;
+  width: 100%;
+}
+
+.graph-edge {
+  stroke: var(--dim);
+  stroke-width: 1;
+}
+
+/* A coalesce, not an interference — dashed rather than solid says so without
+   spending a second hue on it. */
+.graph-coalesce {
+  stroke: var(--fg);
+  stroke-dasharray: 3 2;
+  stroke-width: 1;
+}
+
+.graph-dot {
+  fill: var(--bg);
+  stroke: var(--fg);
+  stroke-width: 1.5;
+}
+
+.graph-name {
+  fill: var(--fg);
+  font-family: inherit;
+  font-size: 9px;
+}
+
+.graph-reg {
+  fill: var(--dim);
+  font-family: inherit;
+  font-size: 8px;
+}
+
+.allocation .alloc-reg {
+  color: var(--accent-ink);
+}
+
+.allocation .alloc-order {
+  color: var(--dim);
+}
+
+.allocation .alloc-coalesced {
+  color: var(--dim);
+}
+
 /* ir and codegen */
 
 .effects {

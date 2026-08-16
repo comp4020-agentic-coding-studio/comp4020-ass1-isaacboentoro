@@ -26,21 +26,24 @@ export type StageId =
   | "parse"
   | "semantics"
   | "ir"
+  /** Not a rewrite either: it decides where the IR's values live. */
+  | "regalloc"
   | "codegen"
-  /** Not a rewrite: this one executes what stage five produced. */
+  /** Not a rewrite: this one executes what lowering produced. */
   | "run";
 
-/** The six rewrites. Running is not one of them, so it is not in this list. */
+/** The seven rewrites. Running is not one of them, so it is not in this list. */
 export const STAGES: readonly StageId[] = [
   "preprocess",
   "scan",
   "parse",
   "semantics",
   "ir",
+  "regalloc",
   "codegen",
 ] as const;
 
-/** Everything with a player on the page: the six rewrites, and then running it. */
+/** Everything with a player on the page: the seven rewrites, and then running it. */
 export const PLAYERS: readonly StageId[] = [...STAGES, "run"] as const;
 
 export const STAGE_TITLES: Record<StageId, string> = {
@@ -49,6 +52,7 @@ export const STAGE_TITLES: Record<StageId, string> = {
   parse: "Parse",
   semantics: "Analyse",
   ir: "Lower to IR",
+  regalloc: "Allocate registers",
   codegen: "Emit assembly",
   run: "Run it",
 };
@@ -388,6 +392,7 @@ export type Compilation = {
   parse: ParseResult;
   semantics: SemanticsResult;
   ir: IRResult;
+  regalloc: import("./regalloc").RegallocResult;
   codegen: CodegenResult;
   /** The first stage that refused, if any. Steps stop there. */
   error?: Diagnostic;

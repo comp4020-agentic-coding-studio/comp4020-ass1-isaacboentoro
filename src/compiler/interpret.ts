@@ -181,14 +181,20 @@ class Machine {
   }
 
   /**
-   * One activation. The frame pointer moves down by this function's size, which
-   * is why a deep recursion eventually walks off the bottom of memory — and why
-   * the depth guard exists.
+   * One activation, based at `top` — the address just below everything the
+   * caller owns.
+   *
+   * The caller works out where that is, because only the caller knows how big its
+   * own frame is. Subtracting the CALLEE's size here instead put a small function
+   * called from a large one right on top of the caller's own temporaries, and the
+   * caller then read back whatever the callee had left there. Nothing but the
+   * differential check found it: the assembly was right, because `sub rsp` on a
+   * real machine measures the caller's frame and not the callee's.
    */
   private call(
     func: FunctionBody,
     args: number[],
-    callerFp: number,
+    top: number,
     depth: number,
   ): number | undefined {
     if (depth > MAX_DEPTH) {
@@ -199,7 +205,7 @@ class Machine {
       );
     }
 
-    const fp = callerFp - func.frame;
+    const fp = top;
     const restoreTemps = this.currentTemps;
     this.currentTemps = func.temps;
 
@@ -332,7 +338,7 @@ class Machine {
         const callee = this.functions.get(instr.callee);
         if (!callee) throw new Trap(`no function ${instr.callee}`, span);
         const args = instr.args.map((arg) => this.load(arg, fp, span));
-        const value = this.call(callee, args, fp, depth + 1);
+        const value = this.call(callee, args, fp - func.frame, depth + 1);
         // The callee left its own temp map behind; this frame's is current again.
         this.currentTemps = func.temps;
         if (instr.dest) this.store(instr.dest, fp, value ?? 0, span);

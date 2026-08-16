@@ -66,12 +66,16 @@ describe("one section per stage", () => {
     expect(names).toEqual(PLAYERS.map((stage) => STAGE_TITLES[stage]));
   });
 
-  it("numbers the six rewrites, and does not count running as one", () => {
+  it("numbers the rewrites, and does not count running as one", () => {
     const indexes = [...document.querySelectorAll(".stage .section-index")];
     expect(indexes).toHaveLength(PLAYERS.length);
     for (const node of indexes) expect(node.getAttribute("aria-hidden")).toBe("true");
 
-    const numbered = indexes.filter((node) => /STAGE \d+ \/ 6/.test(node.textContent ?? ""));
+    // The count in the label is the length of STAGES, not a number typed into the
+    // markup: adding a stage and forgetting to renumber is exactly the drift this
+    // catches.
+    const label = new RegExp(`STAGE \\d+ / ${STAGES.length}$`);
+    const numbered = indexes.filter((node) => label.test(node.textContent?.trim() ?? ""));
     expect(numbered).toHaveLength(STAGES.length);
     // Running is a section with a player, but it is not a rewrite and must not
     // claim to be one.
@@ -278,7 +282,13 @@ describe("honesty about the subset", () => {
   const text = document.body.textContent ?? "";
 
   it("says on the page what is left out", () => {
-    for (const missing of ["structs", "linker", "register allocation", "bounds"]) {
+    for (const missing of [
+      "structs",
+      "linker",
+      "register allocation",
+      "coalescing",
+      "bounds",
+    ]) {
       expect(text.toLowerCase(), missing).toContain(missing);
     }
   });
