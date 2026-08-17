@@ -51,8 +51,10 @@ type StagePlayer = {
   echo: HTMLElement;
   rules: HTMLElement;
   body: HTMLElement;
+  copy: HTMLButtonElement;
   cursor: number;
   timer?: number;
+  copyTimer?: number;
 };
 
 function required<T extends HTMLElement>(id: string): T {
@@ -87,6 +89,7 @@ export function start(): void {
     echo: required(`echo-${stage}`),
     rules: required(`rules-${stage}`),
     body: required(`pane-${stage}`),
+    copy: required<HTMLButtonElement>(`copy-${stage}`),
     cursor: 0,
   }));
 
@@ -124,6 +127,11 @@ export function start(): void {
       player.play.disabled = steps <= 1;
       // Land on the end so the section reads as finished, then rewind to watch.
       setCursor(player, Math.max(0, steps - 1));
+      // A stale "COPIED" would now be lying about what is on the clipboard.
+      if (player.copyTimer !== undefined) window.clearTimeout(player.copyTimer);
+      player.copyTimer = undefined;
+      player.copy.textContent = "COPY";
+      delete player.copy.dataset.copied;
     }
   }
 
@@ -335,6 +343,46 @@ export function start(): void {
     }, SPEEDS[speedIndex].ms);
   }
 
+  // ------------------------------------------------------------------ copying
+
+  const COPY_RESET_MS = 1500;
+
+  /**
+   * Copy a pane's whole text, regardless of where its scrubber stands.
+   *
+   * An unrevealed artefact is `visibility: hidden`, not removed — that is what
+   * keeps the tree from jumping as a stage plays — so `textContent` already
+   * reads the complete, finished output no matter the cursor. Copying anything
+   * narrower would mean scrubbing back to the start before copying the answer,
+   * which is not what a copy button is for.
+   *
+   * Best-effort, the same way `prefs.ts` treats storage: the clipboard API is
+   * absent in some sandboxed frames and can refuse for reasons a page never
+   * finds out, so a failure is a label, not a thrown error.
+   */
+  function copyOutput(player: StagePlayer): void {
+    const text = player.body.textContent ?? "";
+    const said = (label: string) => {
+      if (player.copyTimer !== undefined) window.clearTimeout(player.copyTimer);
+      player.copy.textContent = label;
+      player.copy.dataset.copied = label === "COPIED" ? "true" : "false";
+      player.copyTimer = window.setTimeout(() => {
+        player.copy.textContent = "COPY";
+        delete player.copy.dataset.copied;
+        player.copyTimer = undefined;
+      }, COPY_RESET_MS);
+    };
+
+    if (!navigator.clipboard) {
+      said("CAN'T COPY");
+      return;
+    }
+    navigator.clipboard
+      .writeText(text)
+      .then(() => said("COPIED"))
+      .catch(() => said("CAN'T COPY"));
+  }
+
   // ----------------------------------------------------------------- settings
 
   /**
@@ -457,6 +505,8 @@ export function start(): void {
       if (playing(player)) stop(player);
       else play(player);
     });
+
+    player.copy.addEventListener("click", () => copyOutput(player));
   }
 
   speed.addEventListener("input", () => {

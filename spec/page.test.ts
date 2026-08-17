@@ -149,6 +149,13 @@ describe("every stage's controls are really in the markup", () => {
         // The output scrolls, so a keyboard has to be able to reach it.
         expect(body?.getAttribute("tabindex")).toBe("0");
       });
+
+      it("offers a real button to copy what it produces, named for the stage", () => {
+        const copy = section?.querySelector(`#copy-${stage}`);
+        expect(copy?.tagName).toBe("BUTTON");
+        expect(copy?.getAttribute("type")).toBe("button");
+        expect(copy?.getAttribute("aria-label")).toContain(STAGE_TITLES[stage]);
+      });
     });
   }
 });

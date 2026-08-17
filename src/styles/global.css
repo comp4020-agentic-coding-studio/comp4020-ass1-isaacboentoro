@@ -809,6 +809,41 @@ mark .tok {
   min-width: 0;
 }
 
+.stage-column-head {
+  align-items: baseline;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.copy-button {
+  background: var(--bg);
+  border: var(--rule) solid var(--dim);
+  color: var(--dim);
+  cursor: pointer;
+  flex: none;
+  font: inherit;
+  font-size: 0.65rem;
+  letter-spacing: 0.14em;
+  margin: 0 0 0.5rem;
+  padding: 0.2rem 0.55rem;
+  transition:
+    background-color var(--fast) var(--ease),
+    border-color var(--fast) var(--ease),
+    color var(--fast) var(--ease);
+}
+
+.copy-button:hover {
+  border-color: var(--fg);
+  color: var(--fg);
+}
+
+.copy-button[data-copied="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
 .echo {
   border-color: var(--dimmer);
   color: var(--dim);
@@ -900,6 +935,7 @@ mark .tok {
 .stage-body:focus-visible,
 .editor-input:focus-visible,
 .preset:focus-visible,
+.copy-button:focus-visible,
 .player-play:focus-visible {
   outline: var(--rule) solid var(--accent-ink);
   outline-offset: 2px;

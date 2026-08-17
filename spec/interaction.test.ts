@@ -668,4 +668,77 @@ describe("the page, driven", () => {
       }, 250);
     });
   });
+
+  function copyButton(stage: string): HTMLButtonElement {
+    return document.getElementById(`copy-${stage}`) as HTMLButtonElement;
+  }
+
+  it("copies the pane's own text to the clipboard, and says so", async () => {
+    const written: string[] = [];
+    // @ts-expect-error jsdom has no Clipboard implementation at all
+    navigator.clipboard = { writeText: (text: string) => (written.push(text), Promise.resolve()) };
+
+    scrubTo("scan", 3);
+    const expected = document.getElementById("pane-scan")?.textContent ?? "";
+    copyButton("scan").click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(written).toEqual([expected]);
+    expect(copyButton("scan").textContent?.trim()).toBe("COPIED");
+  });
+
+  it("copies the finished output even mid-scrub, since unrevealed text is only hidden, not gone", () => {
+    // An unrevealed artefact is `visibility: hidden`, not removed from the DOM
+    // — that is the whole reveal rule — so `textContent` is already complete
+    // regardless of the cursor. Rewinding must not narrow what gets copied.
+    const written: string[] = [];
+    // @ts-expect-error jsdom has no Clipboard implementation at all
+    navigator.clipboard = { writeText: (text: string) => (written.push(text), Promise.resolve()) };
+
+    scrubTo("scan", Number(scrubber("scan").max));
+    const finished = document.getElementById("pane-scan")?.textContent ?? "";
+    scrubTo("scan", 0);
+    copyButton("scan").click();
+
+    expect(written).toEqual([finished]);
+  });
+
+  it("reverts the label after a while, and does not leave every button saying COPIED", () => {
+    vi.useFakeTimers();
+    // @ts-expect-error jsdom has no Clipboard implementation at all
+    navigator.clipboard = { writeText: () => Promise.resolve() };
+
+    copyButton("scan").click();
+    return Promise.resolve().then(() => {
+      expect(copyButton("scan").textContent?.trim()).toBe("COPIED");
+      expect(copyButton("parse").textContent?.trim()).toBe("COPY");
+      vi.advanceTimersByTime(2000);
+      expect(copyButton("scan").textContent?.trim()).toBe("COPY");
+    });
+  });
+
+  it("says so honestly when there is no clipboard to copy to", async () => {
+    // @ts-expect-error deleting what jsdom never gave it in the first place
+    delete navigator.clipboard;
+    copyButton("scan").click();
+    await Promise.resolve();
+    expect(copyButton("scan").textContent?.trim()).toBe("CAN'T COPY");
+  });
+
+  it("clears a stale COPIED label when the source changes underneath it", () => {
+    vi.useFakeTimers();
+    // @ts-expect-error jsdom has no Clipboard implementation at all
+    navigator.clipboard = { writeText: () => Promise.resolve() };
+
+    copyButton("scan").click();
+    return Promise.resolve().then(() => {
+      expect(copyButton("scan").textContent?.trim()).toBe("COPIED");
+      const editor = document.getElementById("source") as HTMLTextAreaElement;
+      editor.value = "int main() { return 1; }";
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      vi.advanceTimersByTime(200);
+      expect(copyButton("scan").textContent?.trim()).toBe("COPY");
+    });
+  });
 });

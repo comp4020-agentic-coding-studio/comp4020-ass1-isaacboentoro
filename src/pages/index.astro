@@ -237,7 +237,17 @@ const BLURBS: Record<StageId, string> = {
                                 <div class="rules" id={`rules-${stage}`} />
                             </div>
                             <div class="stage-column">
-                                <p class="field-label">What it produces</p>
+                                <div class="stage-column-head">
+                                    <p class="field-label">What it produces</p>
+                                    <button
+                                        class="copy-button"
+                                        id={`copy-${stage}`}
+                                        type="button"
+                                        aria-label={`Copy what ${STAGE_TITLES[stage]} produces`}
+                                    >
+                                        COPY
+                                    </button>
+                                </div>
                                 <div
                                     class="stage-body"
                                     id={`pane-${stage}`}
